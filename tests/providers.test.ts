@@ -117,5 +117,97 @@ describe('Provider URL Matchers & Parsers', () => {
     expect(videos[0].subtitles).toHaveLength(1);
     expect(videos[0].subtitles?.[0].name).toBe('Episode 01.en.srt');
   });
+
+  it('correctly discovers subdirectories and filters out non-video assets and external links', async () => {
+    const { parseDirectoryHtml } = await import('../src/providers/direct.js');
+    const html = `<!DOCTYPE html>
+<html>
+<body>
+<a href="../">Parent Directory</a>
+<a href="https://external-domain.org/about">External Documentation</a>
+<a href="_h5ai/">_h5ai internal assets</a>
+<a href=".hidden/">.hidden folder</a>
+<a href="icons/">icons/</a>
+<a href="css/">css/</a>
+<a href="Season%201/">Season 1/</a>
+<a href="Season%202/">Season 2/</a>
+<a href="poster.jpg">poster.jpg</a>
+<a href="info.nfo">info.nfo</a>
+<a href="sample.mkv">sample.mkv</a>
+<a href="sample.srt">sample.srt</a>
+</body>
+</html>`;
+
+    const res = parseDirectoryHtml(html, 'http://media.local/TV%20Series/');
+    expect(res.videos).toHaveLength(1);
+    expect(res.videos[0].name).toBe('sample.mkv');
+    expect(res.subtitles).toHaveLength(1);
+    expect(res.subtitles[0].name).toBe('sample.srt');
+
+    expect(res.subdirs).toHaveLength(2);
+    expect(res.subdirs[0].name).toBe('Season 1');
+    expect(res.subdirs[0].fullUrl).toBe('http://media.local/TV%20Series/Season%201/');
+    expect(res.subdirs[1].name).toBe('Season 2');
+    expect(res.subdirs[1].fullUrl).toBe('http://media.local/TV%20Series/Season%202/');
+  });
+
+  it('scans subdirectories recursively and aggregates video files only', async () => {
+    const { scanDirectoryRecursively } = await import('../src/providers/direct.js');
+    const { vi } = await import('vitest');
+
+    const rootHtml = `<a href="Season%201/">Season 1/</a><a href="Season%202/">Season 2/</a>`;
+    const s1Html = `<a href="Ep01.mp4">Ep01.mp4</a><a href="Ep02.mkv">Ep02.mkv</a><a href="notes.txt">notes.txt</a>`;
+    const s2Html = `<a href="Ep03.ts">Ep03.ts</a><a href="poster.png">poster.png</a>`;
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const urlStr = String(input);
+      if (urlStr === 'http://example.com/show/') {
+        return new Response(rootHtml, { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      if (urlStr === 'http://example.com/show/Season%201/') {
+        return new Response(s1Html, { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      if (urlStr === 'http://example.com/show/Season%202/') {
+        return new Response(s2Html, { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      return new Response('', { status: 404 });
+    });
+
+    globalThis.fetch = fetchMock as any;
+
+    try {
+      const result = await scanDirectoryRecursively('http://example.com/show/', 3);
+      expect(result.videos).toHaveLength(3);
+      const names = result.videos.map((v) => v.name);
+      expect(names).toContain('Ep01.mp4');
+      expect(names).toContain('Ep02.mkv');
+      expect(names).toContain('Ep03.ts');
+      expect(names).not.toContain('notes.txt');
+      expect(names).not.toContain('poster.png');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('throws notfound PlayerError when a directory URL contains no video files instead of treating folder as video', async () => {
+    const { DirectProvider } = await import('../src/providers/direct.js');
+    const { vi } = await import('vitest');
+
+    const emptyDirHtml = `<html><body><a href="../">../</a><a href="readme.txt">readme.txt</a></body></html>`;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(emptyDirHtml, { status: 200, headers: { 'content-type': 'text/html' } })
+    ) as any;
+
+    try {
+      const direct = new DirectProvider();
+      await expect(
+        direct.resolve(new URL('http://example.com/empty-folder/'))
+      ).rejects.toThrow(/No video files/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 

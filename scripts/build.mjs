@@ -16,21 +16,9 @@ const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const BUDGET = { core: 150 * 1024, content: 5 * 1024 };
 
 const HOSTS = [
-  'https://mega.nz/*',
-  'https://*.mega.nz/*',
-  'https://*.mega.co.nz/*',
-  'https://mega.io/*',
-  'https://drive.google.com/*',
-  'https://drive.usercontent.google.com/*',
-  'https://*.googleusercontent.com/*',
-  'https://www.googleapis.com/*',
-  'https://onedrive.live.com/*',
-  'https://1drv.ms/*',
-  'https://api.onedrive.com/*',
-  'https://*.1drv.com/*',
-  'https://*.livefilestore.com/*',
-  'https://*.microsoftpersonalcontent.com/*',
-  'https://*.sharepoint.com/*',
+  '*://*/*',
+  'https://*/*',
+  'http://*/*',
 ];
 
 const CONTENT_MATCHES = [

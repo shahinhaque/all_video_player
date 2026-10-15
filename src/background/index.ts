@@ -6,8 +6,26 @@ function setupDeclarativeRules() {
   if (!dnr?.updateDynamicRules) return;
 
   dnr.updateDynamicRules({
-    removeRuleIds: [1001, 1002, 1003, 1004, 1005],
+    removeRuleIds: [1000, 1001, 1002, 1003, 1004, 1005],
     addRules: [
+      {
+        id: 1000,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+            { header: 'Access-Control-Allow-Headers', operation: 'set', value: 'Range, Accept-Ranges, Content-Type, Authorization' },
+            { header: 'Access-Control-Expose-Headers', operation: 'set', value: 'Content-Range, Content-Length, Accept-Ranges' },
+            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          ],
+        },
+        condition: {
+          urlFilter: '*',
+          resourceTypes: ['media', 'xmlhttprequest', 'sub_frame', 'other'],
+        },
+      },
       {
         id: 1001,
         priority: 1,
@@ -123,12 +141,24 @@ ext.contextMenus?.onClicked.addListener((info, tab) => {
   }
 });
 
-// Handle incoming messages from content scripts
+// Handle incoming messages from content scripts and player page
 ext.runtime.onMessage?.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);
     ext.tabs.create({ url: playerUrl, index: (sender.tab?.index ?? 0) + 1 });
     sendResponse({ ok: true });
+    return true;
+  }
+  if (message?.type === 'FETCH_TEXT' && message?.url) {
+    fetch(message.url)
+      .then(async (res) => {
+        const text = await res.text();
+        sendResponse({ ok: res.ok, text, status: res.status });
+      })
+      .catch((err) => {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      });
+    return true;
   }
   return true;
 });
