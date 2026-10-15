@@ -10,8 +10,8 @@ export interface SniffResult {
 }
 
 export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
-  // If extension is explicitly .ts/.m2ts/.mts, prefer TS
-  if (isTsName(src.name)) {
+  // If extension is explicitly .ts/.m2ts/.mts or mime is video/mp2t, prefer TS
+  if (isTsName(src.name) || src.mime === 'video/mp2t' || src.mime === 'video/ts') {
     return { container: 'ts', mime: 'video/mp2t' };
   }
 

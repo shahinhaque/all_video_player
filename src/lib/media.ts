@@ -18,7 +18,9 @@ const MIME: Record<string, string> = {
 };
 
 export function extOf(name: string): string {
-  const m = /\.([a-z0-9]{1,5})$/i.exec(name);
+  if (!name) return '';
+  const clean = name.split('?')[0].split('#')[0];
+  const m = /\.([a-z0-9]{1,5})$/i.exec(clean);
   return m ? m[1].toLowerCase() : '';
 }
 

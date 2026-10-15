@@ -6,7 +6,7 @@ function setupDeclarativeRules() {
   if (!dnr?.updateDynamicRules) return;
 
   dnr.updateDynamicRules({
-    removeRuleIds: [1001, 1002],
+    removeRuleIds: [1001, 1002, 1003],
     addRules: [
       {
         id: 1001,
@@ -42,6 +42,24 @@ function setupDeclarativeRules() {
         },
         condition: {
           urlFilter: '*://drive.google.com/*',
+          resourceTypes: ['media', 'xmlhttprequest'],
+        },
+      },
+      {
+        id: 1003,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+            { header: 'Access-Control-Allow-Headers', operation: 'set', value: 'Range, Accept-Ranges, Content-Type' },
+            { header: 'Access-Control-Expose-Headers', operation: 'set', value: 'Content-Range, Content-Length, Accept-Ranges' },
+            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          ],
+        },
+        condition: {
+          urlFilter: '*://*.userstorage.mega.co.nz/*',
           resourceTypes: ['media', 'xmlhttprequest'],
         },
       },

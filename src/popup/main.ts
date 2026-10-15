@@ -14,7 +14,7 @@ const btnOpenOptions = document.getElementById('btn-open-options') as HTMLButton
 const btnClearHistory = document.getElementById('btn-clear-history') as HTMLButtonElement;
 const historyList = document.getElementById('history-list') as HTMLElement;
 
-const SAMPLE_TS_URL = 'https://test-streams.mux.dev/test_001/stream.ts';
+const SAMPLE_TS_URL = 'https://test-streams.mux.dev/x36xhzz/url_0/url_462/193039199_mp4_h264_aac_hd_7.ts';
 
 async function init() {
   btnPaste?.addEventListener('click', async () => {
