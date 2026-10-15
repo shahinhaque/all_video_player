@@ -5,7 +5,7 @@ import { createPlaybackEngine } from '../engines/index.js';
 import { PlaybackEngine, MediaItem, SubtitleTrackInfo } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
-import { createSubtitleTrackUrl } from '../lib/subtitles.js';
+import { createSubtitleTrackUrl, isSubtitleName } from '../lib/subtitles.js';
 import { ext } from '../lib/browser.js';
 
 class PlayerController {
@@ -738,7 +738,7 @@ class PlayerController {
 
   private toggleSubtitles(): void {
     if (!this.activeSubTrack) {
-      this.showAlert('No subtitle track loaded. Drop an .srt or .vtt file to attach subtitles.');
+      this.showAlert('No subtitle track loaded. Drop an .srt, .vtt, or .ass file to attach subtitles.');
       return;
     }
     const track = this.video.textTracks[0];
@@ -752,8 +752,9 @@ class PlayerController {
   private async attachSubtitleFile(file: File): Promise<void> {
     try {
       const text = await file.text();
-      const isSrt = file.name.endsWith('.srt');
-      const trackUrl = createSubtitleTrackUrl(text, isSrt);
+      const lower = file.name.toLowerCase();
+      const fmt = lower.endsWith('.srt') ? 'srt' : (lower.endsWith('.ass') || lower.endsWith('.ssa')) ? 'ass' : 'vtt';
+      const trackUrl = createSubtitleTrackUrl(text, fmt);
 
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
@@ -794,8 +795,9 @@ class PlayerController {
       const bytes = await readAll(stream);
       const text = new TextDecoder('utf-8').decode(bytes);
 
-      const isSrt = subTrack.name.toLowerCase().endsWith('.srt');
-      const trackUrl = createSubtitleTrackUrl(text, isSrt);
+      const lower = subTrack.name.toLowerCase();
+      const fmt = lower.endsWith('.srt') ? 'srt' : (lower.endsWith('.ass') || lower.endsWith('.ssa')) ? 'ass' : 'vtt';
+      const trackUrl = createSubtitleTrackUrl(text, fmt);
 
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
@@ -821,8 +823,8 @@ class PlayerController {
   }
 
   private handleDroppedFiles(files: File[]): void {
-    const subFiles = files.filter((f) => f.name.endsWith('.srt') || f.name.endsWith('.vtt'));
-    const mediaFiles = files.filter((f) => !f.name.endsWith('.srt') && !f.name.endsWith('.vtt'));
+    const subFiles = files.filter((f) => isSubtitleName(f.name));
+    const mediaFiles = files.filter((f) => !isSubtitleName(f.name));
 
     if (mediaFiles.length > 0) {
       const playlist = createLocalPlaylist(files);

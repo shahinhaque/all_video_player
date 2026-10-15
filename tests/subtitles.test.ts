@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   srtToVtt,
+  assToVtt,
+  formatAssTimestamp,
   isSubtitleName,
   isCompanionSubtitle,
   parseSubtitleLanguage,
@@ -26,12 +28,45 @@ CloudPlay Video Stream
     expect(vtt).toContain('Hello World!');
     expect(vtt).toContain('CloudPlay Video Stream');
   });
+
+  it('formats ASS timestamps to WebVTT timestamp format', () => {
+    expect(formatAssTimestamp('0:01:20.50')).toBe('00:01:20.500');
+    expect(formatAssTimestamp('1:23:45.67')).toBe('01:23:45.670');
+    expect(formatAssTimestamp('00:05.12')).toBe('00:00:05.120');
+  });
+
+  it('converts ASS / SSA format content to valid WebVTT, stripping style tags', () => {
+    const ass = `[Script Info]
+Title: Sample ASS
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.20,0:00:03.50,Default,,0,0,0,,{\\b1}Welcome{\\b0} to {\\i1}CloudPlay{\\i0}!
+Dialogue: 0,0:00:05.00,0:00:08.75,Default,,0,0,0,,Line 1\\NLine 2 with comma, and more!
+`;
+
+    const vtt = assToVtt(ass);
+    expect(vtt.startsWith('WEBVTT')).toBe(true);
+    expect(vtt).toContain('00:00:01.200 --> 00:00:03.500');
+    expect(vtt).toContain('Welcome to CloudPlay!');
+    expect(vtt).not.toContain('{\\b1}');
+    expect(vtt).toContain('00:00:05.000 --> 00:00:08.750');
+    expect(vtt).toContain('Line 1\nLine 2 with comma, and more!');
+  });
 });
 
 describe('Companion Subtitle Detection & Matching', () => {
   it('identifies subtitle extensions correctly', () => {
     expect(isSubtitleName('movie.srt')).toBe(true);
     expect(isSubtitleName('movie.vtt')).toBe(true);
+    expect(isSubtitleName('movie.ass')).toBe(true);
+    expect(isSubtitleName('movie.ssa')).toBe(true);
+    expect(isSubtitleName('movie.ASS')).toBe(true);
     expect(isSubtitleName('movie.SRT')).toBe(true);
     expect(isSubtitleName('movie.mp4')).toBe(false);
     expect(isSubtitleName('movie.mkv')).toBe(false);

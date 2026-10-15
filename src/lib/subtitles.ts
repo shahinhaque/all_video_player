@@ -14,18 +14,121 @@ export function srtToVtt(srtContent: string): string {
   return `WEBVTT\n\n${text}\n`;
 }
 
-export function createSubtitleTrackUrl(subContent: string, isSrt: boolean = true): string {
-  const vtt = isSrt ? srtToVtt(subContent) : subContent;
+/**
+ * Converts an ASS/SSA timestamp (e.g. "0:01:20.50") to WebVTT timestamp ("00:01:20.500").
+ */
+export function formatAssTimestamp(ts: string): string {
+  const parts = ts.trim().split(':');
+  if (parts.length < 2) return ts;
+  let hours = '00';
+  let minutes = '00';
+  let seconds = '00';
+  let millis = '000';
+
+  if (parts.length === 3) {
+    hours = parts[0].padStart(2, '0');
+    minutes = parts[1].padStart(2, '0');
+    const secParts = parts[2].split('.');
+    seconds = secParts[0].padStart(2, '0');
+    millis = (secParts[1] || '0').padEnd(3, '0').slice(0, 3);
+  } else if (parts.length === 2) {
+    minutes = parts[0].padStart(2, '0');
+    const secParts = parts[1].split('.');
+    seconds = secParts[0].padStart(2, '0');
+    millis = (secParts[1] || '0').padEnd(3, '0').slice(0, 3);
+  }
+
+  return `${hours}:${minutes}:${seconds}.${millis}`;
+}
+
+/**
+ * Converts Advanced SubStation Alpha (.ass / .ssa) subtitle text to valid WebVTT format.
+ */
+export function assToVtt(assContent: string): string {
+  const lines = assContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const cues: string[] = [];
+
+  let inEvents = false;
+  let startIndex = 1;
+  let endIndex = 2;
+  let textIndex = 9;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inEvents = trimmed.toLowerCase() === '[events]';
+      continue;
+    }
+
+    if (!inEvents) continue;
+
+    if (trimmed.startsWith('Format:')) {
+      const formatHeaders = trimmed.substring(7).split(',').map((h) => h.trim().toLowerCase());
+      startIndex = formatHeaders.indexOf('start');
+      endIndex = formatHeaders.indexOf('end');
+      textIndex = formatHeaders.indexOf('text');
+      if (startIndex === -1) startIndex = 1;
+      if (endIndex === -1) endIndex = 2;
+      if (textIndex === -1) textIndex = formatHeaders.length - 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('Dialogue:')) {
+      const rest = trimmed.substring(9).trim();
+      const parts: string[] = [];
+      let cur = 0;
+      for (let i = 0; i < textIndex; i++) {
+        const nextComma = rest.indexOf(',', cur);
+        if (nextComma === -1) break;
+        parts.push(rest.substring(cur, nextComma));
+        cur = nextComma + 1;
+      }
+      parts.push(rest.substring(cur));
+
+      if (parts.length > textIndex) {
+        const rawStart = parts[startIndex]?.trim() || '';
+        const rawEnd = parts[endIndex]?.trim() || '';
+        let rawText = parts[textIndex] || '';
+
+        // Strip ASS style override tags: {\...}
+        rawText = rawText.replace(/\{[^}]*\}/g, '');
+        // Replace ASS line breaks: \N, \n with \n
+        rawText = rawText.replace(/\\N/g, '\n').replace(/\\n/g, '\n');
+        // Replace non-breaking spaces \h with space
+        rawText = rawText.replace(/\\h/g, ' ');
+
+        const cleanText = rawText.trim();
+        if (rawStart && rawEnd && cleanText) {
+          const vttStart = formatAssTimestamp(rawStart);
+          const vttEnd = formatAssTimestamp(rawEnd);
+          cues.push(`${vttStart} --> ${vttEnd}\n${cleanText}`);
+        }
+      }
+    }
+  }
+
+  return `WEBVTT\n\n${cues.join('\n\n')}\n`;
+}
+
+export function createSubtitleTrackUrl(subContent: string, formatOrIsSrt: string | boolean = 'srt'): string {
+  let vtt = subContent;
+  let fmt = typeof formatOrIsSrt === 'string' ? formatOrIsSrt.toLowerCase() : formatOrIsSrt ? 'srt' : 'vtt';
+
+  if (fmt === 'srt') {
+    vtt = srtToVtt(subContent);
+  } else if (fmt === 'ass' || fmt === 'ssa') {
+    vtt = assToVtt(subContent);
+  }
   const blob = new Blob([vtt], { type: 'text/vtt' });
   return URL.createObjectURL(blob);
 }
 
 /**
- * Checks if a filename has a subtitle extension (.srt or .vtt).
+ * Checks if a filename has a subtitle extension (.srt, .vtt, .ass, or .ssa).
  */
 export function isSubtitleName(filename: string): boolean {
   const lower = filename.toLowerCase();
-  return lower.endsWith('.srt') || lower.endsWith('.vtt');
+  return lower.endsWith('.srt') || lower.endsWith('.vtt') || lower.endsWith('.ass') || lower.endsWith('.ssa');
 }
 
 /**
