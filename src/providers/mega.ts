@@ -57,22 +57,70 @@ export function unpackFileKey(keyBytes: Uint8Array): MegaKeyInfo {
   };
 }
 
-export async function decryptAttributes(atBytes: Uint8Array, aesKeyBytes: Uint8Array): Promise<{ n: string }> {
+export async function aesCbcDecryptNoPad(
+  ciphertext: Uint8Array,
+  rawKey: Uint8Array,
+  iv: Uint8Array = new Uint8Array(16)
+): Promise<Uint8Array> {
+  if (ciphertext.length === 0) return new Uint8Array(0);
+  if (ciphertext.length % 16 !== 0) {
+    throw new PlayerError('unknown', 'Ciphertext length must be a multiple of 16 for unpadded decryption.');
+  }
+
   const key = await crypto.subtle.importKey(
     'raw',
-    aesKeyBytes as BufferSource,
+    rawKey as BufferSource,
     { name: 'AES-CBC' },
     false,
-    ['decrypt']
+    ['encrypt', 'decrypt']
   );
-  // Zero IV for attribute decryption in MEGA
-  const iv = new Uint8Array(16);
-  const decrypted = await crypto.subtle.decrypt(
+
+  const lastBlock = ciphertext.subarray(ciphertext.length - 16);
+  const dummyPad = new Uint8Array(16).fill(0x10);
+  const encPadBuf = await crypto.subtle.encrypt(
+    { name: 'AES-CBC', iv: lastBlock as BufferSource },
+    key,
+    dummyPad
+  );
+  const encPad = new Uint8Array(encPadBuf).subarray(0, 16);
+
+  const combined = new Uint8Array(ciphertext.length + 16);
+  combined.set(ciphertext, 0);
+  combined.set(encPad, ciphertext.length);
+
+  const decBuf = await crypto.subtle.decrypt(
     { name: 'AES-CBC', iv: iv as BufferSource },
     key,
-    atBytes as BufferSource
+    combined
   );
-  const text = new TextDecoder().decode(new Uint8Array(decrypted));
+
+  return new Uint8Array(decBuf);
+}
+
+export async function aesEcbDecryptNoPad(
+  ciphertext: Uint8Array,
+  rawKey: Uint8Array
+): Promise<Uint8Array> {
+  if (ciphertext.length === 0) return new Uint8Array(0);
+  if (ciphertext.length % 16 !== 0) {
+    throw new PlayerError('unknown', 'Ciphertext length must be a multiple of 16 for AES-ECB decryption.');
+  }
+
+  const result = new Uint8Array(ciphertext.length);
+  const zeroIv = new Uint8Array(16);
+
+  for (let offset = 0; offset < ciphertext.length; offset += 16) {
+    const block = ciphertext.subarray(offset, offset + 16);
+    const decBlock = await aesCbcDecryptNoPad(block, rawKey, zeroIv);
+    result.set(decBlock, offset);
+  }
+
+  return result;
+}
+
+export async function decryptAttributes(atBytes: Uint8Array, aesKeyBytes: Uint8Array): Promise<{ n: string }> {
+  const decryptedBytes = await aesCbcDecryptNoPad(atBytes, aesKeyBytes, new Uint8Array(16));
+  const text = new TextDecoder().decode(decryptedBytes);
   // Attribute string format: "MEGA{"n":"name.mp4",...}"
   const braceIdx = text.indexOf('{');
   if (braceIdx === -1) {
@@ -224,21 +272,9 @@ export class MegaProvider implements SourceProvider {
           const encKeyB64 = colonIdx !== -1 ? node.k.slice(colonIdx + 1) : node.k;
           const encKeyBytes = base64UrlToBytes(encKeyB64);
 
-          // Decrypt node key using AES-ECB / AES-CBC with zero IV
+          // Decrypt node key using AES-ECB
           const rawFolderKey = wordsToBytes(folderWords.slice(0, 4));
-          const cryptoMasterKey = await crypto.subtle.importKey(
-            'raw',
-            rawFolderKey as BufferSource,
-            { name: 'AES-CBC' },
-            false,
-            ['decrypt']
-          );
-          const decKeyBuf = await crypto.subtle.decrypt(
-            { name: 'AES-CBC', iv: new Uint8Array(16) as BufferSource },
-            cryptoMasterKey,
-            encKeyBytes as BufferSource
-          );
-          const decKeyBytes = new Uint8Array(decKeyBuf);
+          const decKeyBytes = await aesEcbDecryptNoPad(encKeyBytes, rawFolderKey);
           const keyInfo = unpackFileKey(decKeyBytes);
 
           let fName = `MEGA_${node.h}`;
