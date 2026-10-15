@@ -50,7 +50,7 @@ function manifest(target) {
     m.minimum_chrome_version = '110';
   } else {
     m.background = { scripts: ['background.js'] };
-    m.browser_specific_settings = { gecko: { id: 'cloudplay@itmagnet.com.au', strict_min_version: '128.0' } };
+    m.browser_specific_settings = { gecko: { id: 'cloudplay@itmagnet.com.au', strict_min_version: '115.0' } };
   }
   return m;
 }
