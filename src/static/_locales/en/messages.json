@@ -1,0 +1,22 @@
+{
+  "appName": {
+    "message": "CloudPlay – Cloud Video Player",
+    "description": "The name of the extension."
+  },
+  "appShortName": {
+    "message": "CloudPlay",
+    "description": "Short name for the extension."
+  },
+  "appDesc": {
+    "message": "Stream TS, MP4, MKV, HLS & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.",
+    "description": "The description of the extension."
+  },
+  "actionTitle": {
+    "message": "CloudPlay",
+    "description": "Tooltip for the extension browser action."
+  },
+  "contextMenuPlay": {
+    "message": "Play with CloudPlay",
+    "description": "Context menu title when right-clicking links."
+  }
+}

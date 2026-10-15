@@ -44,13 +44,13 @@ function manifest(target) {
   const icons = { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' };
   const m = {
     manifest_version: 3,
-    name: 'CloudPlay – Cloud Video Player',
-    short_name: 'CloudPlay',
+    default_locale: 'en',
+    name: '__MSG_appName__',
+    short_name: '__MSG_appShortName__',
     version: pkg.version,
-    description:
-      'Stream TS, MP4, MKV & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.',
+    description: '__MSG_appDesc__',
     icons,
-    action: { default_popup: 'popup.html', default_icon: icons, default_title: 'CloudPlay' },
+    action: { default_popup: 'popup.html', default_icon: icons, default_title: '__MSG_actionTitle__' },
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions: ['storage', 'contextMenus', 'activeTab', 'declarativeNetRequest'],
     host_permissions: HOSTS,

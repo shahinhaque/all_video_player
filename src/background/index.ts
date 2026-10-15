@@ -101,9 +101,10 @@ function setupDeclarativeRules() {
 
 // Setup Context Menus and Declarative Rules
 ext.runtime.onInstalled?.addListener(() => {
+  const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
   ext.contextMenus.create({
     id: 'cloudplay-open-link',
-    title: '▶ Play in CloudPlay',
+    title,
     contexts: ['link', 'page'],
   });
   setupDeclarativeRules();

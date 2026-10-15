@@ -44,6 +44,18 @@ function devStub(): Ext {
       contains: async () => true,
       request: async () => true,
     },
+    i18n: {
+      getMessage: (key: string) => {
+        const msgs: Record<string, string> = {
+          appName: 'CloudPlay – Cloud Video Player',
+          appShortName: 'CloudPlay',
+          appDesc: 'Stream TS, MP4, MKV, HLS & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.',
+          actionTitle: 'CloudPlay',
+          contextMenuPlay: '▶ Play in CloudPlay',
+        };
+        return msgs[key] || '';
+      },
+    },
   } as unknown as Ext;
 }
 
