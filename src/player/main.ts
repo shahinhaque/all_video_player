@@ -6,6 +6,7 @@ import { PlaybackEngine, MediaItem } from '../core/types.js';
 import { formatTime, formatBytes } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl } from '../lib/subtitles.js';
+import { ext } from '../lib/browser.js';
 
 class PlayerController {
   private video = document.getElementById('video-element') as HTMLVideoElement;
@@ -72,6 +73,27 @@ class PlayerController {
     this.setupEventListeners();
     this.setupKeyboardShortcuts();
 
+    // Load user preferences
+    try {
+      const data = await ext.storage.local.get(['settings', 'volume', 'muted']);
+      const s = data?.settings;
+      if (s?.defaultSpeed && s.defaultSpeed !== 1.0) {
+        this.setSpeed(s.defaultSpeed);
+      }
+      if (s?.autoNext !== undefined && this.chkAutoNext) {
+        this.chkAutoNext.checked = s.autoNext;
+        this.playlistManager?.setAutoNext(s.autoNext);
+      }
+      if (typeof data?.volume === 'number') {
+        this.video.volume = data.volume;
+        this.volumeSlider.value = String(data.volume);
+      }
+      if (typeof data?.muted === 'boolean') {
+        this.video.muted = data.muted;
+        this.updateVolumeIcons();
+      }
+    } catch {}
+
     const params = new URLSearchParams(window.location.search);
     const mediaUrl = params.get('url');
 
@@ -128,8 +150,16 @@ class PlayerController {
       this.codecPill.hidden = false;
       this.codecPill.textContent = container;
 
-      // Check saved resume position
-      const savedSec = await this.playlistManager.getSavedPosition(item);
+      // Check saved resume position if enabled in settings
+      let savedSec = 0;
+      try {
+        const s = (await ext.storage.local.get('settings'))?.settings;
+        if (s?.resumePlayback !== false) {
+          savedSec = await this.playlistManager.getSavedPosition(item);
+        }
+      } catch {
+        savedSec = await this.playlistManager.getSavedPosition(item);
+      }
       await engine.attach(savedSec);
 
       this.video.play().catch(() => {
@@ -179,10 +209,12 @@ class PlayerController {
       this.video.volume = parseFloat(this.volumeSlider.value);
       this.video.muted = this.video.volume === 0;
       this.updateVolumeIcons();
+      ext.storage.local.set({ volume: this.video.volume, muted: this.video.muted }).catch(() => {});
     });
     this.btnMute.addEventListener('click', () => {
       this.video.muted = !this.video.muted;
       this.updateVolumeIcons();
+      ext.storage.local.set({ muted: this.video.muted }).catch(() => {});
     });
 
     // Speed menu
