@@ -1,9 +1,18 @@
 import { ext } from '../lib/browser.js';
 
 // Setup declarativeNetRequest rules to remove restrictive CORS/CORP and Content-Disposition headers for Google Drive & cloud streams
-function setupDeclarativeRules() {
+async function setupDeclarativeRules() {
   const dnr = (globalThis as any).chrome?.declarativeNetRequest || (globalThis as any).browser?.declarativeNetRequest;
   if (!dnr?.updateDynamicRules) return;
+
+  try {
+    if (dnr.getDynamicRules) {
+      const existing = await dnr.getDynamicRules();
+      if (existing && existing.length >= 6) {
+        return;
+      }
+    }
+  } catch {}
 
   dnr.updateDynamicRules({
     removeRuleIds: [1000, 1001, 1002, 1003, 1004, 1005],
@@ -23,7 +32,7 @@ function setupDeclarativeRules() {
         },
         condition: {
           urlFilter: '*',
-          resourceTypes: ['media', 'xmlhttprequest', 'sub_frame', 'other'],
+          resourceTypes: ['media', 'xmlhttprequest'],
         },
       },
       {
@@ -119,17 +128,19 @@ function setupDeclarativeRules() {
 
 // Setup Context Menus and Declarative Rules
 ext.runtime.onInstalled?.addListener(() => {
-  const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
-  ext.contextMenus.create({
-    id: 'cloudplay-open-link',
-    title,
-    contexts: ['link', 'page'],
-  });
+  try {
+    ext.contextMenus?.removeAll(() => {
+      const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
+      ext.contextMenus?.create({
+        id: 'cloudplay-open-link',
+        title,
+        contexts: ['link', 'page'],
+      });
+    });
+  } catch {}
   setupDeclarativeRules();
 });
 
-// Also ensure rules are active on startup
-setupDeclarativeRules();
 
 ext.contextMenus?.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'cloudplay-open-link') {

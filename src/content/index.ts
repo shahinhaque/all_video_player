@@ -343,20 +343,49 @@ function injectFloatingButton(): void {
     document.body.appendChild(btn);
   }
 
-  btn.textContent = label;
+  if (btn.textContent !== label) {
+    btn.textContent = label;
+  }
 
   if (isMega) {
     injectMegaInlineButtons();
   }
 }
 
-// Observe URL and DOM changes on single-page applications
+// Observe URL and DOM changes on single-page applications with debouncing and loop protection
 let lastUrl = location.href;
-const observer = new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
+let mutationTimeout: number | null = null;
+let isUpdatingDom = false;
+
+const observer = new MutationObserver((mutations) => {
+  if (isUpdatingDom) return;
+
+  // Ignore mutations caused exclusively by our own injected elements
+  const isSelf = mutations.every((m) => {
+    const target = m.target as HTMLElement;
+    return target && (
+      target.id?.startsWith('cloudplay') ||
+      target.className?.includes?.('cloudplay')
+    );
+  });
+  if (isSelf) return;
+
+  if (mutationTimeout !== null) {
+    clearTimeout(mutationTimeout);
   }
-  injectFloatingButton();
+
+  mutationTimeout = window.setTimeout(() => {
+    mutationTimeout = null;
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+    }
+    try {
+      isUpdatingDom = true;
+      injectFloatingButton();
+    } finally {
+      isUpdatingDom = false;
+    }
+  }, 350);
 });
 
 observer.observe(document.body || document.documentElement, {
@@ -365,7 +394,10 @@ observer.observe(document.body || document.documentElement, {
 });
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectFloatingButton);
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(injectFloatingButton, 300);
+  });
 } else {
-  injectFloatingButton();
+  setTimeout(injectFloatingButton, 300);
 }
+
