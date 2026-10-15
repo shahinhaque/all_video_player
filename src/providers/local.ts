@@ -1,6 +1,7 @@
-import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
+import { SourceProvider, MediaItem, Playlist, RangeByteSource, SubtitleTrackInfo } from '../core/types.js';
 import { guessMime, isVideoName } from '../lib/media.js';
 import { naturalCompare } from '../lib/util.js';
+import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 
 // Cache for active local file handles
 const localFilesMap = new Map<string, File>();
@@ -21,7 +22,21 @@ export function registerLocalFile(file: File): MediaItem {
 
 export function createLocalPlaylist(files: File[]): Playlist {
   const videoFiles = files.filter((f) => isVideoName(f.name) || f.type.startsWith('video/'));
+  const subFiles = files.filter((f) => isSubtitleName(f.name));
   const items = videoFiles.map(registerLocalFile);
+
+  const subTracks: SubtitleTrackInfo[] = subFiles.map((sub) => {
+    const registered = registerLocalFile(sub);
+    return {
+      id: registered.id,
+      name: sub.name,
+      label: '',
+      provider: 'local',
+      ref: registered.ref,
+    };
+  });
+
+  pairSubtitlesWithVideos(items, subTracks);
   items.sort((a, b) => naturalCompare(a.name, b.name));
 
   return {

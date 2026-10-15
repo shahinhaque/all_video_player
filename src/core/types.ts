@@ -2,6 +2,16 @@
 
 export type ProviderId = 'gdrive' | 'onedrive' | 'mega' | 'http' | 'local';
 
+export interface SubtitleTrackInfo {
+  id: string;
+  name: string;
+  label: string;
+  srclang?: string;
+  provider: ProviderId;
+  ref: Record<string, string>;
+  isDefault?: boolean;
+}
+
 /** A playable file. Must stay JSON-serialisable (it is passed to the background stream proxy). */
 export interface MediaItem {
   /** Provider-scoped stable id (used for resume keys). */
@@ -13,6 +23,8 @@ export interface MediaItem {
   provider: ProviderId;
   /** Provider-specific data needed to re-open the item (ids, keys, urls). */
   ref: Record<string, string>;
+  /** Optional companion subtitle tracks detected in the same folder or drop batch. */
+  subtitles?: SubtitleTrackInfo[];
 }
 
 export interface Playlist {

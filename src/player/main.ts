@@ -2,8 +2,8 @@ import { resolveUrl, PROVIDERS } from '../providers/index.js';
 import { createLocalPlaylist } from '../providers/local.js';
 import { PlaylistManager } from '../core/playlist.js';
 import { createPlaybackEngine } from '../engines/index.js';
-import { PlaybackEngine, MediaItem } from '../core/types.js';
-import { formatTime, formatBytes } from '../lib/util.js';
+import { PlaybackEngine, MediaItem, SubtitleTrackInfo } from '../core/types.js';
+import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl } from '../lib/subtitles.js';
 import { ext } from '../lib/browser.js';
@@ -140,6 +140,13 @@ class PlayerController {
     if (this.alertToast) this.alertToast.hidden = true;
     if (this.warningBanner) this.warningBanner.hidden = true;
 
+    // Clean up previous subtitle track
+    if (this.activeSubTrack) {
+      this.activeSubTrack.remove();
+      this.activeSubTrack = null;
+      this.btnCc.classList.remove('active');
+    }
+
     // Reset preview frame when playing new item
     if (this.drivePreviewFrame) {
       this.drivePreviewFrame.hidden = true;
@@ -200,6 +207,11 @@ class PlayerController {
         savedSec = await this.playlistManager.getSavedPosition(item);
       }
       await engine.attach(savedSec);
+
+      // Auto-load companion subtitles if present
+      if (item.subtitles && item.subtitles.length > 0) {
+        this.loadCompanionSubtitle(item.subtitles[0]);
+      }
 
       this.video.play().catch(() => {
         // Autoplay policy might require interaction
@@ -773,18 +785,60 @@ class PlayerController {
     }
   }
 
+  private async loadCompanionSubtitle(subTrack: SubtitleTrackInfo): Promise<void> {
+    try {
+      const provider = PROVIDERS.find((p) => p.id === subTrack.provider);
+      if (!provider) return;
+
+      const subSource = await provider.open({
+        id: subTrack.id,
+        name: subTrack.name,
+        size: 0,
+        provider: subTrack.provider,
+        ref: subTrack.ref,
+      });
+
+      const maxLen = subSource.size > 0 ? subSource.size - 1 : 2 * 1024 * 1024;
+      const stream = await subSource.read(0, maxLen);
+      const bytes = await readAll(stream);
+      const text = new TextDecoder('utf-8').decode(bytes);
+
+      const isSrt = subTrack.name.toLowerCase().endsWith('.srt');
+      const trackUrl = createSubtitleTrackUrl(text, isSrt);
+
+      if (this.activeSubTrack) {
+        this.activeSubTrack.remove();
+        this.activeSubTrack = null;
+      }
+
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.label = subTrack.label || subTrack.name;
+      track.srclang = subTrack.srclang || 'en';
+      track.src = trackUrl;
+      track.default = true;
+
+      this.video.appendChild(track);
+      this.activeSubTrack = track;
+      if (this.video.textTracks && this.video.textTracks.length > 0) {
+        this.video.textTracks[0].mode = 'showing';
+      }
+      this.btnCc.classList.add('active');
+    } catch (e) {
+      console.warn('Failed to auto-load companion subtitle:', e);
+    }
+  }
+
   private handleDroppedFiles(files: File[]): void {
     const subFiles = files.filter((f) => f.name.endsWith('.srt') || f.name.endsWith('.vtt'));
     const mediaFiles = files.filter((f) => !f.name.endsWith('.srt') && !f.name.endsWith('.vtt'));
 
     if (mediaFiles.length > 0) {
-      const playlist = createLocalPlaylist(mediaFiles);
+      const playlist = createLocalPlaylist(files);
       this.playlistManager = new PlaylistManager(playlist);
       this.renderPlaylist();
       this.playItem(this.playlistManager.currentItem);
-    }
-
-    if (subFiles.length > 0) {
+    } else if (subFiles.length > 0) {
       this.attachSubtitleFile(subFiles[0]);
     }
   }

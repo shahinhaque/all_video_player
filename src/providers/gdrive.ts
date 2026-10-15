@@ -1,7 +1,8 @@
-import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
+import { SourceProvider, MediaItem, Playlist, RangeByteSource, SubtitleTrackInfo } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
 import { fetchWithRetry } from '../lib/network.js';
+import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 
 export class GDriveProvider implements SourceProvider {
   readonly id = 'gdrive';
@@ -116,6 +117,7 @@ export class GDriveProvider implements SourceProvider {
       const html = await res.text();
       
       const items: MediaItem[] = [];
+      const subTracks: SubtitleTrackInfo[] = [];
       const idMatches = [...html.matchAll(/data-id="([a-zA-Z0-9_-]+)"[^>]*data-name="([^"]+)"/g)];
       
       for (const m of idMatches) {
@@ -130,8 +132,18 @@ export class GDriveProvider implements SourceProvider {
             provider: 'gdrive',
             ref: { fileId: fId, downloadUrl: `https://drive.usercontent.google.com/download?id=${fId}&export=download&confirm=t` },
           });
+        } else if (isSubtitleName(fName)) {
+          subTracks.push({
+            id: fId,
+            name: fName,
+            label: '',
+            provider: 'gdrive',
+            ref: { fileId: fId, downloadUrl: `https://drive.usercontent.google.com/download?id=${fId}&export=download&confirm=t` },
+          });
         }
       }
+
+      pairSubtitlesWithVideos(items, subTracks);
 
       if (items.length > 0) {
         return {

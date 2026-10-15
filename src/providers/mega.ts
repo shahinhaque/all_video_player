@@ -1,7 +1,8 @@
-import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
+import { SourceProvider, MediaItem, Playlist, RangeByteSource, SubtitleTrackInfo } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
 import { fetchWithRetry } from '../lib/network.js';
+import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 
 // Base64URL string <-> Uint8Array utilities for MEGA's format
 export function base64UrlToBytes(str: string): Uint8Array {
@@ -265,6 +266,7 @@ export class MegaProvider implements SourceProvider {
     }
 
     const items: MediaItem[] = [];
+    const subTracks: SubtitleTrackInfo[] = [];
 
     for (const node of nodes) {
       // Type 0 is file
@@ -287,17 +289,29 @@ export class MegaProvider implements SourceProvider {
             if (attrs.n) fName = attrs.n;
           }
 
-          if (isVideoEntry(fName)) {
-            // Encode key bytes back to base64url for ref
-            let keyBin = '';
-            for (let i = 0; i < decKeyBytes.length; i++) keyBin += String.fromCharCode(decKeyBytes[i]);
-            const keyStr = btoa(keyBin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          // Encode key bytes back to base64url for ref
+          let keyBin = '';
+          for (let i = 0; i < decKeyBytes.length; i++) keyBin += String.fromCharCode(decKeyBytes[i]);
+          const keyStr = btoa(keyBin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+          if (isVideoEntry(fName)) {
             items.push({
               id: node.h,
               name: fName,
               size: node.s || 0,
               mime: guessMime(fName),
+              provider: 'mega',
+              ref: {
+                fileId: node.h,
+                key: keyStr,
+                folderId,
+              },
+            });
+          } else if (isSubtitleName(fName)) {
+            subTracks.push({
+              id: node.h,
+              name: fName,
+              label: '',
               provider: 'mega',
               ref: {
                 fileId: node.h,
@@ -311,6 +325,8 @@ export class MegaProvider implements SourceProvider {
         }
       }
     }
+
+    pairSubtitlesWithVideos(items, subTracks);
 
     if (items.length === 0) {
       throw new PlayerError('notfound', 'No playable video files found in this MEGA folder.');

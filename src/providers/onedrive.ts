@@ -1,8 +1,9 @@
-import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
+import { SourceProvider, MediaItem, Playlist, RangeByteSource, SubtitleTrackInfo } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
 import { utf8ToBase64Url } from '../lib/util.js';
 import { fetchWithRetry } from '../lib/network.js';
+import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 
 interface OneDriveItemResponse {
   id: string;
@@ -71,23 +72,40 @@ export class OneDriveProvider implements SourceProvider {
 
       const childData: { value: OneDriveItemResponse[] } = await childRes.json();
       const items: MediaItem[] = [];
+      const subTracks: SubtitleTrackInfo[] = [];
 
       for (const c of childData.value) {
-        if (!c.folder && isVideoEntry(c.name, c.file?.mimeType)) {
-          items.push({
-            id: c.id,
-            name: c.name,
-            size: c.size,
-            mime: c.file?.mimeType || guessMime(c.name),
-            provider: 'onedrive',
-            ref: {
-              shareToken,
-              itemId: c.id,
-              downloadUrl: c['@content.downloadUrl'] || '',
-            },
-          });
+        if (!c.folder) {
+          if (isVideoEntry(c.name, c.file?.mimeType)) {
+            items.push({
+              id: c.id,
+              name: c.name,
+              size: c.size,
+              mime: c.file?.mimeType || guessMime(c.name),
+              provider: 'onedrive',
+              ref: {
+                shareToken,
+                itemId: c.id,
+                downloadUrl: c['@content.downloadUrl'] || '',
+              },
+            });
+          } else if (isSubtitleName(c.name)) {
+            subTracks.push({
+              id: c.id,
+              name: c.name,
+              label: '',
+              provider: 'onedrive',
+              ref: {
+                shareToken,
+                itemId: c.id,
+                downloadUrl: c['@content.downloadUrl'] || '',
+              },
+            });
+          }
         }
       }
+
+      pairSubtitlesWithVideos(items, subTracks);
 
       if (items.length === 0) {
         throw new PlayerError('notfound', 'No playable video files found in this OneDrive folder.');
