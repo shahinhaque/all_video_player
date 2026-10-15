@@ -54,6 +54,25 @@ export class PlaylistManager {
     return undefined;
   }
 
+  addItems(newItems: MediaItem[]): number {
+    const existingIds = new Set(this.playlist.items.map((it) => it.id));
+    const added: MediaItem[] = [];
+    for (const item of newItems) {
+      if (!existingIds.has(item.id)) {
+        this.playlist.items.push(item);
+        existingIds.add(item.id);
+        added.push(item);
+      }
+    }
+    const current = this.currentItem;
+    this.playlist.items.sort((a, b) => naturalCompare(a.name, b.name));
+    if (current) {
+      const idx = this.playlist.items.findIndex((it) => it.id === current.id);
+      this.activeIndex = idx !== -1 ? idx : 0;
+    }
+    return added.length;
+  }
+
   hasNext(): boolean {
     return this.activeIndex < this.playlist.items.length - 1;
   }

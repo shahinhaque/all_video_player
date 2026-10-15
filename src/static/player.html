@@ -155,6 +155,33 @@
           <button id="btn-close-playlist" class="btn-icon" aria-label="Close sidebar">&times;</button>
         </div>
       </div>
+      <!-- Add Folder / Stream URL Bar -->
+      <div class="playlist-add-bar">
+        <form id="form-add-url" class="add-input-wrapper">
+          <input
+            id="input-playlist-url"
+            type="text"
+            class="playlist-url-input"
+            placeholder="Paste folder or video URL (Drive, MEGA, SFTP)..."
+            aria-label="Paste folder or video URL"
+          />
+          <button id="btn-add-url" type="submit" class="btn-primary-sm" title="Add to Playlist" aria-label="Add to Playlist">
+            <span id="btn-add-text">Add</span>
+            <div id="add-spinner" class="spinner-sm" hidden></div>
+          </button>
+        </form>
+        <div class="folder-actions-row">
+          <button id="btn-open-folder" type="button" class="btn-subtle-sm" title="Open Local Folder (from Computer)" aria-label="Open Local Folder">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+            <span>Local Folder</span>
+          </button>
+          <input id="folder-picker-input" type="file" webkitdirectory directory multiple style="display:none">
+          <button id="btn-open-file-alt" type="button" class="btn-subtle-sm" title="Open Local Files" aria-label="Open Local Files">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            <span>Local Files</span>
+          </button>
+        </div>
+      </div>
       <div id="playlist-items" class="playlist-items">
         <!-- Rendered items -->
       </div>

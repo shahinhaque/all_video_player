@@ -87,4 +87,35 @@ describe('Provider URL Matchers & Parsers', () => {
     expect(playlist.items[0].name).toBe('stream.ts');
     expect(playlist.items[0].provider).toBe('http');
   });
+
+  it('parses HTTP/SFTP directory index HTML and extracts video files and subtitles', async () => {
+    const { parseDirectoryIndex } = await import('../src/providers/direct.js');
+    const html = `<!DOCTYPE html>
+<html>
+<head><title>Index of /media/videos/</title></head>
+<body>
+<h1>Index of /media/videos/</h1>
+<hr><pre><a href="../">../</a>
+<a href="Episode%2001.mp4">Episode 01.mp4</a>    15-Oct-2026 12:00  524288000
+<a href="Episode%2001.en.srt">Episode 01.en.srt</a> 15-Oct-2026 12:01  1024
+<a href="Episode%2002.mkv">Episode 02.mkv</a>    15-Oct-2026 12:02  624288000
+<a href="Episode%2003.ts">Episode 03.ts</a>     15-Oct-2026 12:03  724288000
+<a href="notes.txt">notes.txt</a>          15-Oct-2026 12:04  512
+</pre><hr></body>
+</html>`;
+
+    const { videos, subtitles } = parseDirectoryIndex(html, 'https://my-nas.local/media/videos/');
+    expect(videos).toHaveLength(3);
+    expect(videos[0].name).toBe('Episode 01.mp4');
+    expect(videos[0].id).toBe('https://my-nas.local/media/videos/Episode%2001.mp4');
+    expect(videos[1].name).toBe('Episode 02.mkv');
+    expect(videos[2].name).toBe('Episode 03.ts');
+
+    // Subtitle should be paired with Episode 01.mp4 and parsed
+    expect(subtitles).toHaveLength(1);
+    expect(subtitles[0].name).toBe('Episode 01.en.srt');
+    expect(videos[0].subtitles).toHaveLength(1);
+    expect(videos[0].subtitles?.[0].name).toBe('Episode 01.en.srt');
+  });
 });
+

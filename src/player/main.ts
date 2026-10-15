@@ -71,6 +71,15 @@ class PlayerController {
   private playlistBadge = document.getElementById('playlist-badge') as HTMLElement;
   private chkAutoNext = document.getElementById('chk-auto-next') as HTMLInputElement;
 
+  private formAddUrl = document.getElementById('form-add-url') as HTMLFormElement;
+  private inputPlaylistUrl = document.getElementById('input-playlist-url') as HTMLInputElement;
+  private btnAddUrl = document.getElementById('btn-add-url') as HTMLButtonElement;
+  private btnAddText = document.getElementById('btn-add-text') as HTMLElement;
+  private addSpinner = document.getElementById('add-spinner') as HTMLElement;
+  private btnOpenFolder = document.getElementById('btn-open-folder') as HTMLElement;
+  private folderPickerInput = document.getElementById('folder-picker-input') as HTMLInputElement;
+  private btnOpenFileAlt = document.getElementById('btn-open-file-alt') as HTMLElement;
+
   private playlistManager: PlaylistManager | null = null;
   private currentEngine: PlaybackEngine | null = null;
   private preferredChunkSize = 2097152;
@@ -324,13 +333,30 @@ class PlayerController {
       this.iconFsExit.hidden = !isFs;
     });
 
-    // Local file picker
-    this.btnOpenFile.addEventListener('click', () => {
-      this.filePickerInput.click();
+    // Add folder or stream URL form
+    this.formAddUrl?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const val = this.inputPlaylistUrl.value;
+      if (val) this.addUrlToPlaylist(val);
     });
+
+    // Local folder picker (adds all videos in directory)
+    this.btnOpenFolder?.addEventListener('click', () => {
+      this.folderPickerInput.click();
+    });
+    this.folderPickerInput?.addEventListener('change', () => {
+      const files = Array.from(this.folderPickerInput.files || []);
+      if (files.length > 0) this.handleDroppedFiles(files, true);
+      this.folderPickerInput.value = '';
+    });
+
+    // Local file pickers
+    const openFiles = () => this.filePickerInput.click();
+    this.btnOpenFile?.addEventListener('click', openFiles);
+    this.btnOpenFileAlt?.addEventListener('click', openFiles);
     this.filePickerInput.addEventListener('change', () => {
       const files = Array.from(this.filePickerInput.files || []);
-      if (files.length > 0) this.handleDroppedFiles(files);
+      if (files.length > 0) this.handleDroppedFiles(files, true);
       this.filePickerInput.value = '';
     });
 
@@ -886,17 +912,71 @@ class PlayerController {
     }
   }
 
-  private handleDroppedFiles(files: File[]): void {
+  private handleDroppedFiles(files: File[], append = false): void {
     const subFiles = files.filter((f) => isSubtitleName(f.name));
     const mediaFiles = files.filter((f) => !isSubtitleName(f.name));
 
     if (mediaFiles.length > 0) {
       const playlist = createLocalPlaylist(files);
-      this.playlistManager = new PlaylistManager(playlist);
-      this.renderPlaylist();
-      this.playItem(this.playlistManager.currentItem);
+      if (append && this.playlistManager && this.playlistManager.count > 0) {
+        const added = this.playlistManager.addItems(playlist.items);
+        this.renderPlaylist();
+        this.updatePlaylistUI();
+        this.showAlert(`Added ${added} video(s) to playlist.`);
+      } else {
+        this.playlistManager = new PlaylistManager(playlist);
+        this.renderPlaylist();
+        this.playItem(this.playlistManager.currentItem);
+      }
     } else if (subFiles.length > 0) {
       this.attachSubtitleFile(subFiles[0]);
+    }
+  }
+
+  private async addUrlToPlaylist(rawUrl: string): Promise<void> {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) {
+      this.showAlert('Please enter a folder or stream URL.');
+      return;
+    }
+
+    if (this.btnAddUrl) this.btnAddUrl.disabled = true;
+    if (this.addSpinner && this.btnAddText) {
+      this.addSpinner.hidden = false;
+      this.btnAddText.hidden = true;
+    }
+
+    try {
+      const playlist = await resolveUrl(trimmed);
+      if (!playlist.items || playlist.items.length === 0) {
+        this.showAlert('No video files found at this folder location.');
+        return;
+      }
+
+      if (this.playlistManager && this.playlistManager.count > 0) {
+        const count = this.playlistManager.addItems(playlist.items);
+        this.renderPlaylist();
+        this.updatePlaylistUI();
+        this.showAlert(`Added ${count} video(s) from "${playlist.title || 'folder'}" to playlist.`);
+      } else {
+        this.playlistManager = new PlaylistManager(playlist);
+        this.renderPlaylist();
+        this.playItem(this.playlistManager.currentItem);
+        this.showAlert(`Loaded ${playlist.items.length} video(s) from "${playlist.title || 'folder'}".`);
+      }
+
+      if (this.inputPlaylistUrl) {
+        this.inputPlaylistUrl.value = '';
+      }
+    } catch (err) {
+      const pe = toPlayerError(err);
+      this.showAlert(`Failed to load folder: ${pe.message}`);
+    } finally {
+      if (this.btnAddUrl) this.btnAddUrl.disabled = false;
+      if (this.addSpinner && this.btnAddText) {
+        this.addSpinner.hidden = true;
+        this.btnAddText.hidden = false;
+      }
     }
   }
 

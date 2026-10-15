@@ -46,4 +46,30 @@ describe('PlaylistManager', () => {
     expect(prev?.name).toBe('Episode 10.ts');
     expect(manager.currentIndex).toBe(2);
   });
+
+  it('adds items dynamically and sorts them with natural ordering while preserving active item', () => {
+    const manager = new PlaylistManager(dummyPlaylist);
+    manager.setIndex(1); // Playing Episode 2.ts
+
+    const newItems = [
+      { id: '15', name: 'Episode 15.ts', size: 1000, provider: 'mega' as const, ref: {} },
+      { id: '3', name: 'Episode 3.ts', size: 1000, provider: 'mega' as const, ref: {} },
+      { id: '2', name: 'Episode 2.ts', size: 1000, provider: 'mega' as const, ref: {} }, // duplicate, should be skipped
+    ];
+
+    const added = manager.addItems(newItems);
+    expect(added).toBe(2);
+    expect(manager.items.map((i) => i.name)).toEqual([
+      'Episode 1.ts',
+      'Episode 2.ts',
+      'Episode 3.ts',
+      'Episode 10.ts',
+      'Episode 15.ts',
+      'Episode 20.ts',
+    ]);
+    // Active item should still be Episode 2.ts
+    expect(manager.currentItem?.name).toBe('Episode 2.ts');
+    expect(manager.currentIndex).toBe(1);
+  });
 });
+
