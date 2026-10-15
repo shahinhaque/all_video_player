@@ -35,14 +35,16 @@ function setupDeclarativeRules() {
           type: 'modifyHeaders',
           responseHeaders: [
             { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
             { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
             { header: 'Content-Disposition', operation: 'remove' },
             { header: 'X-Frame-Options', operation: 'remove' },
+            { header: 'Content-Security-Policy', operation: 'remove' },
           ],
         },
         condition: {
           urlFilter: '*://drive.google.com/*',
-          resourceTypes: ['media', 'xmlhttprequest'],
+          resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
         },
       },
       {

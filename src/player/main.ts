@@ -10,6 +10,7 @@ import { ext } from '../lib/browser.js';
 
 class PlayerController {
   private video = document.getElementById('video-element') as HTMLVideoElement;
+  private drivePreviewFrame = document.getElementById('drive-preview-frame') as HTMLIFrameElement;
   private wrapper = document.querySelector('.video-wrapper') as HTMLElement;
   private currentTitle = document.getElementById('current-title') as HTMLElement;
   private codecPill = document.getElementById('codec-pill') as HTMLElement;
@@ -128,6 +129,13 @@ class PlayerController {
     this.currentTitle.title = item.name;
     this.updatePlaylistUI();
 
+    // Reset preview frame when playing new item
+    if (this.drivePreviewFrame) {
+      this.drivePreviewFrame.hidden = true;
+      this.drivePreviewFrame.src = 'about:blank';
+    }
+    this.video.hidden = false;
+
     // Clean up previous engine
     if (this.currentEngine) {
       this.currentEngine.destroy();
@@ -138,11 +146,26 @@ class PlayerController {
       const provider = PROVIDERS.find((p) => p.id === item.provider);
       if (!provider) throw new Error(`Provider not found: ${item.provider}`);
 
+      // Check if item is Google Drive MKV in a browser without native Matroska support
+      if (item.provider === 'gdrive' && (item.name.toLowerCase().endsWith('.mkv') || item.mime?.includes('matroska'))) {
+        const canPlayMkv = this.video.canPlayType('video/x-matroska');
+        if (!canPlayMkv) {
+          this.activateDrivePreview(item);
+          return;
+        }
+      }
+
       const source = await provider.open(item);
       const host = {
         warn: (msg: string) => this.showAlert(msg),
         fail: (err: unknown) => {
           const pe = toPlayerError(err);
+          // If native video playback failed on Google Drive, fallback to Drive preview player
+          if (item.provider === 'gdrive' && this.drivePreviewFrame && !this.drivePreviewFrame.src.includes('drive.google.com')) {
+            console.warn('Native playback failed on Google Drive, activating Drive preview player fallback');
+            this.activateDrivePreview(item);
+            return;
+          }
           this.showAlert(pe.message);
         },
       };
@@ -177,6 +200,20 @@ class PlayerController {
     } finally {
       this.showBuffering(false);
     }
+  }
+
+  private activateDrivePreview(item: MediaItem): void {
+    const fileId = item.ref?.fileId || item.id;
+    if (this.currentEngine) {
+      this.currentEngine.destroy();
+      this.currentEngine = null;
+    }
+    this.video.hidden = true;
+    this.drivePreviewFrame.hidden = false;
+    this.drivePreviewFrame.src = `https://drive.google.com/file/d/${fileId}/preview`;
+    this.codecPill.hidden = false;
+    this.codecPill.textContent = 'DRIVE STREAM (MKV)';
+    this.showBuffering(false);
   }
 
   private setupEventListeners(): void {
