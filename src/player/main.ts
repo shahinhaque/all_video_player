@@ -714,6 +714,9 @@ class PlayerController {
     this.playlistManager.items.forEach((item, index) => {
       const el = document.createElement('div');
       el.className = 'playlist-item';
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('aria-label', `Play ${item.name}`);
       if (index === this.playlistManager?.currentIndex) el.classList.add('active');
 
       el.innerHTML = `
@@ -727,6 +730,14 @@ class PlayerController {
       el.addEventListener('click', () => {
         const selected = this.playlistManager?.setIndex(index);
         this.playItem(selected);
+      });
+
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          const selected = this.playlistManager?.setIndex(index);
+          this.playItem(selected);
+        }
       });
 
       this.playlistItemsContainer.appendChild(el);

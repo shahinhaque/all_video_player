@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="player.css">
 </head>
 <body class="theme-dark">
-  <div id="player-container" class="player-container">
+  <div id="player-container" class="player-container" role="region" aria-label="CloudPlay Video Player">
     <!-- Main Video Surface -->
     <div class="video-wrapper">
       <video id="video-element" playsinline preload="auto"></video>
@@ -24,7 +24,7 @@
         <div class="top-actions">
           <span id="codec-pill" class="pill pill-codec" hidden>TS</span>
           <span id="speed-pill" class="pill pill-subtle">1.0x</span>
-          <button id="btn-shortcuts" class="btn-icon" title="Keyboard Shortcuts (?)" aria-label="Keyboard Shortcuts">
+          <button id="btn-shortcuts" class="btn-icon" title="Keyboard Shortcuts (?)" aria-label="Keyboard Shortcuts" aria-haspopup="dialog">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           </button>
           <button id="btn-toggle-playlist" class="btn-icon" title="Toggle Playlist" aria-label="Toggle Playlist">
@@ -55,10 +55,10 @@
       </div>
 
       <!-- Bottom Controls Bar -->
-      <div id="controls-bar" class="controls-bar">
+      <div id="controls-bar" class="controls-bar" role="toolbar" aria-label="Playback Controls">
         <!-- Progress / Timeline Slider -->
         <div class="timeline-container">
-          <div id="timeline-progress" class="timeline-bar">
+          <div id="timeline-progress" class="timeline-bar" role="slider" aria-label="Timeline" tabindex="0">
             <div id="buffered-bar" class="buffered-range"></div>
             <div id="played-bar" class="played-range"></div>
             <div id="seek-thumb" class="seek-thumb"></div>
@@ -100,14 +100,14 @@
           <div class="controls-right">
             <!-- Playback Speed Menu -->
             <div class="dropdown-container">
-              <button id="btn-speed" class="btn-ctrl-text" title="Playback Speed">1x</button>
-              <div id="speed-menu" class="dropdown-menu" hidden>
-                <button data-speed="0.5">0.5x</button>
-                <button data-speed="0.75">0.75x</button>
-                <button data-speed="1.0" class="active">1.0x</button>
-                <button data-speed="1.25">1.25x</button>
-                <button data-speed="1.5">1.5x</button>
-                <button data-speed="2.0">2.0x</button>
+              <button id="btn-speed" class="btn-ctrl-text" title="Playback Speed" aria-haspopup="menu" aria-expanded="false" aria-label="Playback Speed">1x</button>
+              <div id="speed-menu" class="dropdown-menu" role="menu" hidden>
+                <button data-speed="0.5" role="menuitem">0.5x</button>
+                <button data-speed="0.75" role="menuitem">0.75x</button>
+                <button data-speed="1.0" class="active" role="menuitem">1.0x</button>
+                <button data-speed="1.25" role="menuitem">1.25x</button>
+                <button data-speed="1.5" role="menuitem">1.5x</button>
+                <button data-speed="2.0" role="menuitem">2.0x</button>
               </div>
             </div>
 
@@ -167,11 +167,11 @@
     </aside>
 
     <!-- Keyboard Shortcuts Modal -->
-    <div id="shortcuts-modal" class="modal-backdrop" hidden>
+    <div id="shortcuts-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" hidden>
       <div class="modal-card">
         <div class="modal-header">
-          <h3>Keyboard Shortcuts</h3>
-          <button id="btn-close-shortcuts" class="btn-icon">&times;</button>
+          <h3 id="shortcuts-title">Keyboard Shortcuts</h3>
+          <button id="btn-close-shortcuts" class="btn-icon" aria-label="Close keyboard shortcuts">&times;</button>
         </div>
         <div class="modal-grid">
           <div class="shortcut-row"><kbd>Space</kbd> <span>Play / Pause</span></div>

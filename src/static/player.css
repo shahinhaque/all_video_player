@@ -818,3 +818,27 @@ kbd {
   border-radius: 5px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
+
+/* Subtitles & Captions Styling (Accessibility & High Contrast) */
+video::cue {
+  color: #ffffff;
+  background-color: rgba(0, 0, 0, 0.82);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1.15rem;
+  line-height: 1.4;
+  font-weight: 600;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+  border-radius: 4px;
+  padding: 3px 8px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Accessibility: Focus Rings for Keyboard Navigation */
+button:focus-visible,
+input:focus-visible,
+.playlist-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
