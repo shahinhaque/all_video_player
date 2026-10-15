@@ -64,7 +64,7 @@ export interface EngineHost {
 }
 
 export interface PlaybackEngine {
-  readonly kind: 'native' | 'ts';
+  readonly kind: 'native' | 'ts' | 'mkv' | 'blob';
   attach(startTime: number): Promise<void>;
   destroy(): void;
 }

@@ -23,6 +23,18 @@ export async function createPlaybackEngine(
     };
   }
 
+  // If container is MKV in a browser without native Matroska support (Chromium)
+  if (sniff.container === 'mkv') {
+    const canPlayMkv = typeof video.canPlayType === 'function' && !!video.canPlayType('video/x-matroska');
+    if (!canPlayMkv) {
+      const { MkvEngine } = await import('./mkv.js');
+      return {
+        engine: new MkvEngine(video, src, host, options),
+        container: 'MKV',
+      };
+    }
+  }
+
   // Direct container (MP4, WebM, MKV, etc.) with direct HTTP URL
   if (src.directUrl) {
     return {

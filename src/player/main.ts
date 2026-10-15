@@ -164,15 +164,6 @@ class PlayerController {
       const provider = PROVIDERS.find((p) => p.id === item.provider);
       if (!provider) throw new Error(`Provider not found: ${item.provider}`);
 
-      // Check if item is Google Drive MKV in a browser without native Matroska support
-      if (item.provider === 'gdrive' && (item.name.toLowerCase().endsWith('.mkv') || item.mime?.includes('matroska'))) {
-        const canPlayMkv = this.video.canPlayType('video/x-matroska');
-        if (!canPlayMkv) {
-          this.activateDrivePreview(item);
-          return;
-        }
-      }
-
       const source = await provider.open(item);
       const host = {
         warn: (msg: string) => this.showWarning(msg),
