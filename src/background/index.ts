@@ -1,4 +1,4 @@
-import { ext } from '../lib/browser.js';
+import { ext, getRawBrowser } from '../lib/browser.js';
 
 // Setup declarativeNetRequest rules to remove restrictive CORS/CORP and Content-Disposition headers for Google Drive & cloud streams
 async function setupDeclarativeRules() {
@@ -144,7 +144,7 @@ ext.runtime.onInstalled?.addListener(() => {
 
 // Setup Firefox blocking webRequest for reliable CORS header override
 function setupFirefoxWebRequest() {
-  const browserApi = (globalThis as any).browser;
+  const browserApi = getRawBrowser();
   if (!browserApi?.webRequest?.onHeadersReceived) return;
 
   try {
@@ -163,7 +163,7 @@ function setupFirefoxWebRequest() {
         setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         return { responseHeaders: headers };
       },
-      { urls: ['<all_urls>'], types: ['xmlhttprequest', 'media'] },
+      { urls: ['<all_urls>'], types: ['xmlhttprequest', 'media', 'other'] },
       ['blocking', 'responseHeaders']
     );
   } catch (err) {
@@ -173,7 +173,7 @@ function setupFirefoxWebRequest() {
 
 setupFirefoxWebRequest();
 
-ext.contextMenus?.onClicked.addListener((info, tab) => {
+ext.contextMenus?.onClicked.addListener((info: any, tab: any) => {
   if (info.menuItemId === 'cloudplay-open-link') {
     const targetUrl = info.linkUrl || info.pageUrl;
     if (targetUrl) {
@@ -184,8 +184,11 @@ ext.contextMenus?.onClicked.addListener((info, tab) => {
 });
 
 // Handle incoming messages from content scripts and player page
-ext.runtime.onMessage?.addListener((message, sender, sendResponse) => {
-  const isFirefox = (typeof __TARGET__ !== 'undefined' && __TARGET__ === 'firefox') || typeof (globalThis as any).browser?.runtime !== 'undefined';
+const rawBrowser = getRawBrowser();
+const msgTarget = rawBrowser?.runtime?.onMessage ? rawBrowser : ext;
+
+msgTarget.runtime.onMessage?.addListener((message: any, sender: any, sendResponse: any) => {
+  const isFirefox = (typeof __TARGET__ !== 'undefined' && __TARGET__ === 'firefox') || !!rawBrowser?.runtime;
 
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);

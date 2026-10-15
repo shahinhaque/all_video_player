@@ -16,6 +16,7 @@ const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const BUDGET = { core: 150 * 1024, content: 5 * 1024 };
 
 const HOSTS = [
+  '<all_urls>',
   '*://*/*',
   'https://*/*',
   'http://*/*',
@@ -53,15 +54,17 @@ function manifest(target) {
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions,
     host_permissions: HOSTS,
-    optional_host_permissions: ['https://*/*', 'http://*/*'],
     content_scripts: [{ matches: CONTENT_MATCHES, js: ['content.js'], run_at: 'document_idle' }],
   };
   if (target === 'chrome') {
     m.background = { service_worker: 'background.js' };
     m.minimum_chrome_version = '110';
+    m.optional_host_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];
   } else {
     m.background = { scripts: ['background.js'] };
     m.browser_specific_settings = { gecko: { id: 'cloudplay@itmagnet.com.au', strict_min_version: '115.0' } };
+    m.optional_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];
+    m.optional_host_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];
   }
   return m;
 }

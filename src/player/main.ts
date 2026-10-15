@@ -7,7 +7,7 @@ import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl, isSubtitleName } from '../lib/subtitles.js';
 import { PrefetchedByteSource } from '../lib/network.js';
-import { ext } from '../lib/browser.js';
+import { ext, getExtensionPermissions } from '../lib/browser.js';
 
 class PlayerController {
   private video = document.getElementById('video-element') as HTMLVideoElement;
@@ -944,6 +944,30 @@ class PlayerController {
     if (this.addSpinner && this.btnAddText) {
       this.addSpinner.hidden = false;
       this.btnAddText.hidden = true;
+    }
+
+    // In Firefox and MV3, request host permission immediately while user gesture is active
+    try {
+      const urlObj = new URL(trimmed);
+      if (urlObj.protocol === 'http:' || urlObj.protocol === 'https:') {
+        const origin = `${urlObj.protocol}//${urlObj.host}/*`;
+        const perms = getExtensionPermissions();
+        if (perms?.contains && perms?.request) {
+          const has = await perms.contains({ origins: [origin] });
+          if (!has) {
+            try {
+              await perms.request({ origins: [origin] });
+            } catch (pErr) {
+              console.warn('Origin permission request failed, trying wildcard:', pErr);
+              try {
+                await perms.request({ origins: ['*://*/*'] });
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Permission request error:', e);
     }
 
     try {

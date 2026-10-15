@@ -8,8 +8,35 @@ declare global {
   const __DEV__: boolean;
 }
 
+// In WebExtension sandboxes, browser and chrome exist as global variables in lexical scope
+declare const browser: any;
+declare const chrome: any;
+
+export function getRawBrowser(): any {
+  if (typeof browser !== 'undefined' && browser?.runtime) return browser;
+  const g = globalThis as any;
+  if (typeof g.browser !== 'undefined' && g.browser?.runtime) return g.browser;
+  if (typeof window !== 'undefined' && (window as any).browser?.runtime) return (window as any).browser;
+  return null;
+}
+
+export function getRawChrome(): any {
+  if (typeof chrome !== 'undefined' && chrome?.runtime) return chrome;
+  const g = globalThis as any;
+  if (typeof g.chrome !== 'undefined' && g.chrome?.runtime) return g.chrome;
+  if (typeof window !== 'undefined' && (window as any).chrome?.runtime) return (window as any).chrome;
+  return null;
+}
+
+export function getExtensionPermissions(): any {
+  const b = getRawBrowser();
+  if (b?.permissions) return b.permissions;
+  const c = getRawChrome();
+  if (c?.permissions) return c.permissions;
+  return null;
+}
+
 type Ext = typeof chrome;
-const g = globalThis as unknown as { browser?: Ext; chrome?: Ext };
 
 function devStub(): Ext {
   const area = {
@@ -60,26 +87,18 @@ function devStub(): Ext {
 }
 
 function getExtensionApi(): Ext {
-  const anyGlobal = globalThis as any;
-  if (typeof anyGlobal.browser?.runtime?.sendMessage === 'function') {
-    return anyGlobal.browser;
-  }
-  if (typeof anyGlobal.chrome?.runtime?.sendMessage === 'function') {
-    return anyGlobal.chrome;
-  }
-  if (g.browser?.runtime?.id) return g.browser;
-  if (g.chrome?.runtime?.id) return g.chrome;
+  const b = getRawBrowser();
+  if (b?.runtime?.sendMessage) return b as Ext;
+  const c = getRawChrome();
+  if (c?.runtime?.sendMessage) return c as Ext;
+  if (b?.runtime) return b as Ext;
+  if (c?.runtime) return c as Ext;
   return devStub();
 }
 
 export const ext: Ext = getExtensionApi();
 export const TARGET = typeof __TARGET__ !== 'undefined' ? __TARGET__ : 'chrome';
-export const IS_EXTENSION = !!(
-  (globalThis as any).browser?.runtime?.id ||
-  (globalThis as any).chrome?.runtime?.id ||
-  (globalThis as any).browser?.runtime?.sendMessage ||
-  (globalThis as any).chrome?.runtime?.sendMessage
-);
+export const IS_EXTENSION = !!(getRawBrowser()?.runtime || getRawChrome()?.runtime);
 
 /**
  * Sends a message to the extension background script.
@@ -87,21 +106,20 @@ export const IS_EXTENSION = !!(
  * In Chrome: uses chrome.runtime.sendMessage(msg, callback).
  */
 export async function sendExtensionMessage<T = any>(message: Record<string, unknown>): Promise<T | null> {
-  const browserApi = (globalThis as any).browser;
-  if (typeof browserApi?.runtime?.sendMessage === 'function') {
+  const b = getRawBrowser();
+  if (typeof b?.runtime?.sendMessage === 'function') {
     try {
-      return (await browserApi.runtime.sendMessage(message)) as T;
+      return (await b.runtime.sendMessage(message)) as T;
     } catch (e) {
       console.warn('browser.runtime.sendMessage error:', e);
-      return null;
     }
   }
 
-  const chromeApi = (globalThis as any).chrome;
-  if (typeof chromeApi?.runtime?.sendMessage === 'function') {
+  const c = getRawChrome();
+  if (typeof c?.runtime?.sendMessage === 'function') {
     return new Promise((resolve) => {
       try {
-        const maybePromise = chromeApi.runtime.sendMessage(message, (resp: any) => {
+        const maybePromise = c.runtime.sendMessage(message, (resp: any) => {
           resolve(resp as T);
         });
         if (maybePromise && typeof maybePromise.then === 'function') {

@@ -27,7 +27,8 @@ export async function fetchText(url: string): Promise<string> {
     return resp.text;
   }
   if (resp?.error) {
-    throw new PlayerError('network', `Background fetch failed: ${resp.error}`);
+    const hint = ' If using Firefox, please ensure host permissions are granted in about:addons -> CloudPlay -> Permissions, or allow access when prompted.';
+    throw new PlayerError('network', `Background fetch failed: ${resp.error}.${hint}`);
   }
 
   throw new PlayerError('network', `Failed to fetch directory from ${url}`);
@@ -152,7 +153,10 @@ export async function scanDirectoryRecursively(
     let html = '';
     try {
       html = await fetchText(item.url);
-    } catch {
+    } catch (err) {
+      if (item.depth === 0) {
+        throw err;
+      }
       continue;
     }
 
@@ -332,9 +336,16 @@ export class DirectProvider implements SourceProvider {
           });
 
           if (rangeResp?.ok && rangeResp.bytes) {
-            const bytesArray = rangeResp.bytes instanceof Uint8Array
-              ? rangeResp.bytes
-              : new Uint8Array(rangeResp.bytes);
+            let bytesArray: Uint8Array;
+            if (rangeResp.bytes instanceof Uint8Array) {
+              bytesArray = rangeResp.bytes;
+            } else if (Array.isArray(rangeResp.bytes)) {
+              bytesArray = new Uint8Array(rangeResp.bytes);
+            } else if (typeof rangeResp.bytes === 'object') {
+              bytesArray = new Uint8Array(Object.values(rangeResp.bytes));
+            } else {
+              bytesArray = new Uint8Array(0);
+            }
 
             return new ReadableStream<Uint8Array>({
               start(controller) {
