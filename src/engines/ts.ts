@@ -58,35 +58,75 @@ export class TsEngine implements PlaybackEngine {
       this.abortCtrl.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     });
 
-    const mimeCandidates = [
-      'video/mp4; codecs="avc1.640028, mp4a.40.2"',
-      'video/mp4; codecs="avc1.4d401f, mp4a.40.2"',
-      'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
-      'video/mp4; codecs="avc1.42E01E"',
-      'video/mp4',
-    ];
-    let selectedMime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-    for (const candidate of mimeCandidates) {
-      if (typeof MediaSource.isTypeSupported === 'function' && MediaSource.isTypeSupported(candidate)) {
-        selectedMime = candidate;
-        break;
-      }
-    }
-    this.sourceBuffer = this.mediaSource.addSourceBuffer(selectedMime);
-
-    this.sourceBuffer.addEventListener('updateend', () => {
-      this.isAppending = false;
-      this.drainQueue();
-      this.pruneBuffer();
-    });
-
     this.setupTransmuxer();
+
+    // Hook video element errors
+    this.video.addEventListener('error', () => {
+      const err = this.video.error;
+      if (err && !this.isDestroyed) {
+        this.host.fail(new PlayerError('codec', `TS playback error (code ${err.code}): ${err.message || 'MPEG-TS decoding failed'}`));
+      }
+    }, { signal: this.abortCtrl.signal });
 
     // Hook video seeking event
     this.video.addEventListener('seeking', this.onSeeking);
 
     // Initial feed loop
     this.startStreaming(startTime);
+  }
+
+  private initSourceBuffer(streamType: string): void {
+    if (this.sourceBuffer || !this.mediaSource || this.mediaSource.readyState !== 'open') return;
+
+    let mimeCandidates: string[];
+    if (streamType === 'video') {
+      mimeCandidates = [
+        'video/mp4; codecs="avc1.640028"',
+        'video/mp4; codecs="avc1.4d401f"',
+        'video/mp4; codecs="avc1.42E01E"',
+        'video/mp4',
+      ];
+    } else if (streamType === 'audio') {
+      mimeCandidates = [
+        'audio/mp4; codecs="mp4a.40.2"',
+        'audio/mp4',
+      ];
+    } else {
+      mimeCandidates = [
+        'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+        'video/mp4; codecs="avc1.4d401f, mp4a.40.2"',
+        'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+        'video/mp4; codecs="avc1.42E01E"',
+        'video/mp4',
+      ];
+    }
+
+    let selectedMime = mimeCandidates[0];
+    for (const candidate of mimeCandidates) {
+      if (typeof MediaSource.isTypeSupported === 'function' && MediaSource.isTypeSupported(candidate)) {
+        selectedMime = candidate;
+        break;
+      }
+    }
+
+    try {
+      this.sourceBuffer = this.mediaSource.addSourceBuffer(selectedMime);
+      this.sourceBuffer.addEventListener('updateend', () => {
+        this.isAppending = false;
+        this.drainQueue();
+        this.pruneBuffer();
+      });
+      this.sourceBuffer.addEventListener('error', (e) => {
+        console.warn('SourceBuffer error event:', e);
+      });
+    } catch (e) {
+      console.warn('addSourceBuffer failed with', selectedMime, e);
+      try {
+        this.sourceBuffer = this.mediaSource.addSourceBuffer('video/mp4');
+      } catch (err2) {
+        this.host.fail(new PlayerError('codec', 'Failed to allocate MSE SourceBuffer for TS stream.'));
+      }
+    }
   }
 
   private setupTransmuxer(): void {
@@ -96,6 +136,9 @@ export class TsEngine implements PlaybackEngine {
     });
 
     this.transmuxer.on('data', (segment: TransmuxData) => {
+      if (!this.sourceBuffer) {
+        this.initSourceBuffer(segment.type);
+      }
       if (!this.initSegmentAppended && segment.initSegment) {
         this.queueBuffer(segment.initSegment);
         this.initSegmentAppended = true;

@@ -6,7 +6,7 @@ function setupDeclarativeRules() {
   if (!dnr?.updateDynamicRules) return;
 
   dnr.updateDynamicRules({
-    removeRuleIds: [1001, 1002, 1003],
+    removeRuleIds: [1001, 1002, 1003, 1004, 1005],
     addRules: [
       {
         id: 1001,
@@ -60,6 +60,36 @@ function setupDeclarativeRules() {
         },
         condition: {
           urlFilter: '*://*.userstorage.mega.co.nz/*',
+          resourceTypes: ['media', 'xmlhttprequest'],
+        },
+      },
+      {
+        id: 1004,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          ],
+        },
+        condition: {
+          urlFilter: '*://*.mega.co.nz/*',
+          resourceTypes: ['media', 'xmlhttprequest'],
+        },
+      },
+      {
+        id: 1005,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          ],
+        },
+        condition: {
+          urlFilter: '*://*.mega.nz/*',
           resourceTypes: ['media', 'xmlhttprequest'],
         },
       },

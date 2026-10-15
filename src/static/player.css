@@ -295,8 +295,18 @@ html, body {
   transition: opacity 0.15s ease;
 }
 
-.timeline-container:hover .timeline-tooltip {
+.timeline-container:hover .timeline-tooltip,
+.timeline-container.is-dragging .timeline-tooltip {
   opacity: 1;
+}
+
+.timeline-container.is-dragging .timeline-bar {
+  height: 8px;
+}
+
+.timeline-container.is-dragging .seek-thumb {
+  transform: translate(-50%, -50%) scale(1.3);
+  box-shadow: 0 0 14px rgba(255,255,255,0.8), 0 0 10px var(--primary);
 }
 
 /* Control Buttons Row */

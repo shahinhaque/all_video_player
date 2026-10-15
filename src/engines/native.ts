@@ -27,7 +27,21 @@ export class NativeEngine implements PlaybackEngine {
 
     this.video.addEventListener('error', () => {
       const err = this.video.error;
-      if (err) this.host.fail(new PlayerError('network', `Video element error code ${err.code}: ${err.message}`));
+      if (!err) return;
+      const name = this.src.name?.toLowerCase() || '';
+      const isMkv = name.endsWith('.mkv') || this.src.mime?.includes('matroska');
+      if (err.code === 4 && isMkv) {
+        this.host.fail(
+          new PlayerError(
+            'codec',
+            'Chromium does not support native Matroska (.mkv) container decoding. Open in Firefox (native MKV support) or stream MP4/TS.'
+          )
+        );
+        return;
+      }
+      this.host.fail(
+        new PlayerError('network', `Video element error code ${err.code}: ${err.message || 'Media format or codec not supported'}`)
+      );
     }, { signal: this.abortCtrl.signal });
 
     if (startTime > 0) {

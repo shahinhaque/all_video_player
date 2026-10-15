@@ -21,12 +21,22 @@ export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
     const stream = await src.read(0, probeLen);
     const bytes = await readAll(stream);
 
-    // 1. MPEG-TS Check: sync byte 0x47 every 188 bytes
-    if (bytes.length >= 188 && bytes[0] === 0x47) {
-      if (bytes.length >= 376 && bytes[188] === 0x47) {
-        return { container: 'ts', mime: 'video/mp2t' };
+    // 1. MPEG-TS Check: scan for sync byte 0x47 repeating every 188 or 192 bytes
+    for (let offset = 0; offset < Math.min(bytes.length - 188, 512); offset++) {
+      if (bytes[offset] === 0x47) {
+        // Standard 188-byte MPEG-TS packet check
+        if (offset + 188 < bytes.length && bytes[offset + 188] === 0x47) {
+          if (offset + 376 >= bytes.length || bytes[offset + 376] === 0x47) {
+            return { container: 'ts', mime: 'video/mp2t' };
+          }
+        }
+        // 192-byte M2TS packet check (4-byte timestamp prefix)
+        if (offset + 192 < bytes.length && bytes[offset + 192] === 0x47) {
+          if (offset + 384 >= bytes.length || bytes[offset + 384] === 0x47) {
+            return { container: 'ts', mime: 'video/mp2t' };
+          }
+        }
       }
-      return { container: 'ts', mime: 'video/mp2t' };
     }
 
     // 2. MP4 Check: 'ftyp' box in first 32 bytes
@@ -50,7 +60,7 @@ export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
       bytes[3] === 0xa3
     ) {
       // Check for 'webm' doc type in header
-      const str = new TextDecoder('latin1').decode(bytes.subarray(0, 100));
+      const str = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 120)));
       if (str.includes('webm')) {
         return { container: 'webm', mime: 'video/webm' };
       }

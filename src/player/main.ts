@@ -19,11 +19,14 @@ class PlayerController {
   private alertText = document.getElementById('alert-text') as HTMLElement;
   private alertDismiss = document.getElementById('alert-dismiss') as HTMLElement;
 
+  private timelineContainer = document.querySelector('.timeline-container') as HTMLElement;
   private timelineProgress = document.getElementById('timeline-progress') as HTMLElement;
   private bufferedBar = document.getElementById('buffered-bar') as HTMLElement;
   private playedBar = document.getElementById('played-bar') as HTMLElement;
   private seekThumb = document.getElementById('seek-thumb') as HTMLElement;
   private timelineTooltip = document.getElementById('timeline-tooltip') as HTMLElement;
+  private isDraggingTimeline = false;
+  private wasPlayingBeforeDrag = false;
 
   private btnPlayPause = document.getElementById('btn-play-pause') as HTMLElement;
   private iconPlay = document.getElementById('icon-play') as HTMLElement;
@@ -200,9 +203,15 @@ class PlayerController {
     this.video.addEventListener('waiting', () => this.showBuffering(true));
     this.video.addEventListener('playing', () => this.showBuffering(false));
 
-    // Timeline seeking
-    this.timelineProgress.addEventListener('click', (e) => this.seekTimeline(e));
+    // Timeline seeking & pulling (drag support)
+    this.timelineProgress.addEventListener('mousedown', (e) => this.onTimelineDragStart(e));
+    this.timelineProgress.addEventListener('touchstart', (e) => this.onTimelineTouchStart(e), { passive: true });
     this.timelineProgress.addEventListener('mousemove', (e) => this.hoverTimeline(e));
+
+    window.addEventListener('mousemove', (e) => this.onTimelineDragMove(e));
+    window.addEventListener('touchmove', (e) => this.onTimelineTouchMove(e), { passive: true });
+    window.addEventListener('mouseup', (e) => this.onTimelineDragEnd(e));
+    window.addEventListener('touchend', (e) => this.onTimelineTouchEnd(e));
 
     // Volume
     this.volumeSlider.addEventListener('input', () => {
@@ -404,6 +413,14 @@ class PlayerController {
     if (this.playlistManager?.hasNext()) {
       const nextItem = this.playlistManager.next();
       this.playItem(nextItem);
+    } else {
+      // Seek forward 10s if no next track
+      const dur = this.video.duration;
+      if (dur && Number.isFinite(dur)) {
+        this.video.currentTime = Math.min(dur, this.video.currentTime + 10);
+      } else {
+        this.video.currentTime += 10;
+      }
     }
   }
 
@@ -416,10 +433,14 @@ class PlayerController {
     if (this.playlistManager?.hasPrev()) {
       const prevItem = this.playlistManager.prev();
       this.playItem(prevItem);
+    } else {
+      // Seek backward 10s or jump to start
+      this.video.currentTime = Math.max(0, this.video.currentTime - 10);
     }
   }
 
   private onTimeUpdate(): void {
+    if (this.isDraggingTimeline) return;
     const cur = this.video.currentTime;
     const dur = this.video.duration || 0;
     this.timeCurrent.textContent = formatTime(cur);
@@ -442,16 +463,82 @@ class PlayerController {
     }
   }
 
-  private seekTimeline(e: MouseEvent): void {
-    const rect = this.timelineProgress.getBoundingClientRect();
-    const pos = (e.clientX - rect.left) / rect.width;
+  private onTimelineDragStart(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    this.isDraggingTimeline = true;
+    this.wasPlayingBeforeDrag = !this.video.paused;
+    this.video.pause();
+    this.timelineContainer?.classList.add('is-dragging');
+    this.updateTimelineFromPosition(e.clientX);
+  }
+
+  private onTimelineTouchStart(e: TouchEvent): void {
+    if (e.touches.length === 0) return;
+    this.isDraggingTimeline = true;
+    this.wasPlayingBeforeDrag = !this.video.paused;
+    this.video.pause();
+    this.timelineContainer?.classList.add('is-dragging');
+    this.updateTimelineFromPosition(e.touches[0].clientX);
+  }
+
+  private onTimelineDragMove(e: MouseEvent): void {
+    if (!this.isDraggingTimeline) return;
+    this.updateTimelineFromPosition(e.clientX);
+  }
+
+  private onTimelineTouchMove(e: TouchEvent): void {
+    if (!this.isDraggingTimeline || e.touches.length === 0) return;
+    this.updateTimelineFromPosition(e.touches[0].clientX);
+  }
+
+  private onTimelineDragEnd(e: MouseEvent): void {
+    if (!this.isDraggingTimeline) return;
+    this.isDraggingTimeline = false;
+    this.timelineContainer?.classList.remove('is-dragging');
+    const targetTime = this.updateTimelineFromPosition(e.clientX);
     const dur = this.video.duration;
     if (dur && Number.isFinite(dur)) {
-      this.video.currentTime = pos * dur;
+      this.video.currentTime = targetTime;
+    }
+    if (this.wasPlayingBeforeDrag) {
+      this.video.play().catch(() => {});
     }
   }
 
+  private onTimelineTouchEnd(e: TouchEvent): void {
+    if (!this.isDraggingTimeline) return;
+    this.isDraggingTimeline = false;
+    this.timelineContainer?.classList.remove('is-dragging');
+    const touch = e.changedTouches[0];
+    if (touch) {
+      const targetTime = this.updateTimelineFromPosition(touch.clientX);
+      const dur = this.video.duration;
+      if (dur && Number.isFinite(dur)) {
+        this.video.currentTime = targetTime;
+      }
+    }
+    if (this.wasPlayingBeforeDrag) {
+      this.video.play().catch(() => {});
+    }
+  }
+
+  private updateTimelineFromPosition(clientX: number): number {
+    const rect = this.timelineProgress.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const dur = this.video.duration || 0;
+    const targetTime = pos * dur;
+
+    this.playedBar.style.width = `${pos * 100}%`;
+    this.seekThumb.style.left = `${pos * 100}%`;
+    this.timeCurrent.textContent = formatTime(targetTime);
+    this.timelineTooltip.style.left = `${pos * 100}%`;
+    this.timelineTooltip.textContent = formatTime(targetTime);
+
+    return targetTime;
+  }
+
   private hoverTimeline(e: MouseEvent): void {
+    if (this.isDraggingTimeline) return;
     const rect = this.timelineProgress.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const dur = this.video.duration || 0;
@@ -524,8 +611,21 @@ class PlayerController {
     items.forEach((el, idx) => {
       el.classList.toggle('active', idx === curIdx);
     });
-    this.btnPrev.disabled = !(this.playlistManager?.hasPrev() || this.video.currentTime > 3);
-    this.btnNext.disabled = !(this.playlistManager?.hasNext());
+    // Keep Next/Previous buttons active for seeking even if only 1 item exists
+    this.btnPrev.disabled = false;
+    this.btnNext.disabled = false;
+
+    if (this.playlistManager?.hasPrev()) {
+      this.btnPrev.title = 'Previous Video (Shift+P)';
+    } else {
+      this.btnPrev.title = 'Restart / Seek -10s (Shift+P)';
+    }
+
+    if (this.playlistManager?.hasNext()) {
+      this.btnNext.title = 'Next Video (Shift+N)';
+    } else {
+      this.btnNext.title = 'Seek Forward +10s (Shift+N)';
+    }
   }
 
   private resetControlsTimer(): void {
