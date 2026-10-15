@@ -69,6 +69,7 @@ class PlayerController {
 
   private playlistManager: PlaylistManager | null = null;
   private currentEngine: PlaybackEngine | null = null;
+  private preferredChunkSize = 2097152;
   private hideControlsTimer: number | null = null;
   private savePositionInterval: number | null = null;
   private activeSubTrack: HTMLTrackElement | null = null;
@@ -87,6 +88,9 @@ class PlayerController {
       if (s?.autoNext !== undefined && this.chkAutoNext) {
         this.chkAutoNext.checked = s.autoNext;
         this.playlistManager?.setAutoNext(s.autoNext);
+      }
+      if (s?.chunkSize) {
+        this.preferredChunkSize = s.chunkSize;
       }
       if (typeof data?.volume === 'number') {
         this.video.volume = data.volume;
@@ -170,7 +174,9 @@ class PlayerController {
         },
       };
 
-      const { engine, container } = await createPlaybackEngine(this.video, source, host);
+      const { engine, container } = await createPlaybackEngine(this.video, source, host, {
+        chunkSize: this.preferredChunkSize,
+      });
       this.currentEngine = engine;
 
       this.codecPill.hidden = false;

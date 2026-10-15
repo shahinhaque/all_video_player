@@ -2,6 +2,7 @@ import { PlaybackEngine, RangeByteSource, EngineHost } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { readAll } from '../lib/util.js';
 import { fromTimeRanges, calculateEvictionRanges } from '../lib/buffer.js';
+import { AdaptiveChunkManager } from '../lib/network.js';
 // Import mux.js mp4 transmuxer
 // @ts-expect-error mux.js doesn't bundle ts types
 import muxjs from 'mux.js';
@@ -10,6 +11,10 @@ interface TransmuxData {
   initSegment: Uint8Array;
   data: Uint8Array;
   type: string;
+}
+
+export interface TsEngineOptions {
+  chunkSize?: number;
 }
 
 export class TsEngine implements PlaybackEngine {
@@ -27,7 +32,7 @@ export class TsEngine implements PlaybackEngine {
   private isDestroyed = false;
 
   private currentByteOffset = 0;
-  private chunkSize = 11155 * 188; // 2,097,140 bytes (~2MB, exactly 11,155 MPEG-TS packets)
+  private chunkManager: AdaptiveChunkManager;
   private bufferQueue: Uint8Array[] = [];
   private isAppending = false;
   private isPruning = false;
@@ -37,10 +42,16 @@ export class TsEngine implements PlaybackEngine {
   private estimatedDuration = 0;
   private estimatedBitrate = 0; // bytes per second
 
-  constructor(video: HTMLVideoElement, src: RangeByteSource, host: EngineHost) {
+  constructor(video: HTMLVideoElement, src: RangeByteSource, host: EngineHost, options?: TsEngineOptions) {
     this.video = video;
     this.src = src;
     this.host = host;
+    const initial = options?.chunkSize ?? 2 * 1024 * 1024;
+    this.chunkManager = new AdaptiveChunkManager(
+      initial,
+      Math.max(256 * 1024, Math.floor(initial / 4)),
+      Math.max(initial * 2, 4 * 1024 * 1024)
+    );
   }
 
   async attach(startTime: number = 0): Promise<void> {
@@ -231,9 +242,10 @@ export class TsEngine implements PlaybackEngine {
         continue;
       }
 
+      const currentChunk = this.chunkManager.getAlignedChunkSize(188);
       const reqEnd = fileSize > 0
-        ? Math.min(this.currentByteOffset + this.chunkSize - 1, fileSize - 1)
-        : this.currentByteOffset + this.chunkSize - 1;
+        ? Math.min(this.currentByteOffset + currentChunk - 1, fileSize - 1)
+        : this.currentByteOffset + currentChunk - 1;
 
       if (fileSize > 0 && this.currentByteOffset >= fileSize) {
         // Reached end of file
@@ -246,8 +258,14 @@ export class TsEngine implements PlaybackEngine {
       }
 
       try {
+        const fetchStart = performance.now();
         const stream = await this.src.read(this.currentByteOffset, reqEnd, this.abortCtrl.signal);
         const chunk = await readAll(stream, this.abortCtrl.signal);
+        const durationMs = performance.now() - fetchStart;
+
+        if (chunk.length > 0) {
+          this.chunkManager.recordSample(chunk.length, durationMs);
+        }
 
         if (chunk.length === 0) break;
 

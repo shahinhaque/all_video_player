@@ -60,19 +60,34 @@ export async function fetchWithRetry(
 
 /**
  * Throughput-based adaptive chunk size calculator.
- * Scales chunk size dynamically between 512 KB and 4 MB to optimize streaming latency vs throughput.
+ * Scales chunk size dynamically between min and max bounds to optimize streaming latency vs throughput.
  */
 export class AdaptiveChunkManager {
   private currentChunkSize: number;
-  private minChunkSize = 512 * 1024; // 512 KB
-  private maxChunkSize = 4 * 1024 * 1024; // 4 MB
+  private minChunkSize: number;
+  private maxChunkSize: number;
 
-  constructor(initialSize = 2 * 1024 * 1024) {
-    this.currentChunkSize = initialSize;
+  constructor(
+    initialSize = 2 * 1024 * 1024,
+    minChunkSize = 512 * 1024,
+    maxChunkSize = 4 * 1024 * 1024
+  ) {
+    this.minChunkSize = minChunkSize;
+    this.maxChunkSize = maxChunkSize;
+    this.currentChunkSize = Math.max(minChunkSize, Math.min(maxChunkSize, initialSize));
   }
 
   get chunkSize(): number {
     return this.currentChunkSize;
+  }
+
+  /**
+   * Returns current chunk size aligned down to the given packet alignment (e.g. 188 for MPEG-TS).
+   */
+  getAlignedChunkSize(alignment = 188): number {
+    if (alignment <= 1) return this.currentChunkSize;
+    const count = Math.max(1, Math.floor(this.currentChunkSize / alignment));
+    return count * alignment;
   }
 
   recordSample(bytes: number, durationMs: number): void {

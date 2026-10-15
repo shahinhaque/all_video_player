@@ -2,10 +2,15 @@ import { PlaybackEngine, RangeByteSource, EngineHost } from '../core/types.js';
 import { sniffMedia } from './sniff.js';
 import { NativeEngine } from './native.js';
 
+export interface EngineOptions {
+  chunkSize?: number;
+}
+
 export async function createPlaybackEngine(
   video: HTMLVideoElement,
   src: RangeByteSource,
-  host: EngineHost
+  host: EngineHost,
+  options?: EngineOptions
 ): Promise<{ engine: PlaybackEngine; container: string }> {
   const sniff = await sniffMedia(src);
 
@@ -13,7 +18,7 @@ export async function createPlaybackEngine(
   if (sniff.container === 'ts') {
     const { TsEngine } = await import('./ts.js');
     return {
-      engine: new TsEngine(video, src, host),
+      engine: new TsEngine(video, src, host, options),
       container: 'TS',
     };
   }
