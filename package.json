@@ -1,0 +1,25 @@
+{
+  "name": "cloudplay",
+  "version": "0.1.0",
+  "description": "Lightweight browser extension to stream TS/MP4/MKV/WebM videos from MEGA, Google Drive and OneDrive with playlists.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:chrome": "node scripts/build.mjs --chrome",
+    "build:firefox": "node scripts/build.mjs --firefox",
+    "dev": "node scripts/build.mjs --watch --chrome",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "mux.js": "^7.0.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

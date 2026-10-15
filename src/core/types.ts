@@ -1,0 +1,58 @@
+/** Shared domain types. Every provider and engine is written against these contracts. */
+
+export type ProviderId = 'gdrive' | 'onedrive' | 'mega' | 'http' | 'local';
+
+/** A playable file. Must stay JSON-serialisable (it is passed to the background stream proxy). */
+export interface MediaItem {
+  /** Provider-scoped stable id (used for resume keys). */
+  id: string;
+  name: string;
+  /** Size in bytes, 0 when unknown until opened. */
+  size: number;
+  mime?: string;
+  provider: ProviderId;
+  /** Provider-specific data needed to re-open the item (ids, keys, urls). */
+  ref: Record<string, string>;
+}
+
+export interface Playlist {
+  title: string;
+  items: MediaItem[];
+  startIndex: number;
+  /** Original link the user opened. */
+  sourceUrl: string;
+}
+
+/** Random-access byte stream over a remote (or local) file. */
+export interface RangeByteSource {
+  readonly size: number;
+  readonly name: string;
+  readonly mime?: string;
+  /** URL that a <video> element can load directly (unencrypted sources only). */
+  readonly directUrl?: string;
+  readonly encrypted: boolean;
+  /** Reads bytes [start, end] inclusive. */
+  read(start: number, end: number, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>>;
+  /** Re-resolves an expiring download URL; returns the new direct URL. */
+  refresh?(): Promise<string>;
+}
+
+export interface SourceProvider {
+  readonly id: ProviderId;
+  readonly label: string;
+  canHandle(url: URL): boolean;
+  /** Resolves a share link (file or folder) to a playlist. */
+  resolve(url: URL): Promise<Playlist>;
+  open(item: MediaItem, signal?: AbortSignal): Promise<RangeByteSource>;
+}
+
+export interface EngineHost {
+  warn(message: string): void;
+  fail(error: unknown): void;
+}
+
+export interface PlaybackEngine {
+  readonly kind: 'native' | 'ts';
+  attach(startTime: number): Promise<void>;
+  destroy(): void;
+}
