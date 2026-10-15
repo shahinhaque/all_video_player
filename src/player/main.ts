@@ -1,0 +1,469 @@
+import { resolveUrl, PROVIDERS } from '../providers/index.js';
+import { PlaylistManager } from '../core/playlist.js';
+import { createPlaybackEngine } from '../engines/index.js';
+import { PlaybackEngine, MediaItem } from '../core/types.js';
+import { formatTime, formatBytes } from '../lib/util.js';
+import { toPlayerError } from '../core/errors.js';
+
+class PlayerController {
+  private video = document.getElementById('video-element') as HTMLVideoElement;
+  private wrapper = document.querySelector('.video-wrapper') as HTMLElement;
+  private currentTitle = document.getElementById('current-title') as HTMLElement;
+  private codecPill = document.getElementById('codec-pill') as HTMLElement;
+  private speedPill = document.getElementById('speed-pill') as HTMLElement;
+  private centerIndicator = document.getElementById('center-indicator') as HTMLElement;
+  private alertToast = document.getElementById('alert-toast') as HTMLElement;
+  private alertText = document.getElementById('alert-text') as HTMLElement;
+  private alertDismiss = document.getElementById('alert-dismiss') as HTMLElement;
+
+  private timelineProgress = document.getElementById('timeline-progress') as HTMLElement;
+  private bufferedBar = document.getElementById('buffered-bar') as HTMLElement;
+  private playedBar = document.getElementById('played-bar') as HTMLElement;
+  private seekThumb = document.getElementById('seek-thumb') as HTMLElement;
+  private timelineTooltip = document.getElementById('timeline-tooltip') as HTMLElement;
+
+  private btnPlayPause = document.getElementById('btn-play-pause') as HTMLElement;
+  private iconPlay = document.getElementById('icon-play') as HTMLElement;
+  private iconPause = document.getElementById('icon-pause') as HTMLElement;
+  private btnPrev = document.getElementById('btn-prev') as HTMLButtonElement;
+  private btnNext = document.getElementById('btn-next') as HTMLButtonElement;
+
+  private btnMute = document.getElementById('btn-mute') as HTMLElement;
+  private iconVolHigh = document.getElementById('icon-vol-high') as HTMLElement;
+  private iconVolMute = document.getElementById('icon-vol-mute') as HTMLElement;
+  private volumeSlider = document.getElementById('volume-slider') as HTMLInputElement;
+
+  private timeCurrent = document.getElementById('time-current') as HTMLElement;
+  private timeDuration = document.getElementById('time-duration') as HTMLElement;
+
+  private btnSpeed = document.getElementById('btn-speed') as HTMLElement;
+  private speedMenu = document.getElementById('speed-menu') as HTMLElement;
+  private btnPip = document.getElementById('btn-pip') as HTMLElement;
+  private btnFullscreen = document.getElementById('btn-fullscreen') as HTMLElement;
+  private iconFsEnter = document.getElementById('icon-fs-enter') as HTMLElement;
+  private iconFsExit = document.getElementById('icon-fs-exit') as HTMLElement;
+
+  private btnTogglePlaylist = document.getElementById('btn-toggle-playlist') as HTMLElement;
+  private btnClosePlaylist = document.getElementById('btn-close-playlist') as HTMLElement;
+  private playlistSidebar = document.getElementById('playlist-sidebar') as HTMLElement;
+  private playlistItemsContainer = document.getElementById('playlist-items') as HTMLElement;
+  private playlistCount = document.getElementById('playlist-count') as HTMLElement;
+  private playlistBadge = document.getElementById('playlist-badge') as HTMLElement;
+  private chkAutoNext = document.getElementById('chk-auto-next') as HTMLInputElement;
+
+  private playlistManager: PlaylistManager | null = null;
+  private currentEngine: PlaybackEngine | null = null;
+  private hideControlsTimer: number | null = null;
+  private savePositionInterval: number | null = null;
+
+  async init(): Promise<void> {
+    this.setupEventListeners();
+    this.setupKeyboardShortcuts();
+
+    const params = new URLSearchParams(window.location.search);
+    const mediaUrl = params.get('url');
+
+    if (mediaUrl) {
+      await this.loadUrl(mediaUrl);
+    } else {
+      this.showAlert('No media link provided. Paste a link from the popup or extension menu.');
+    }
+  }
+
+  async loadUrl(url: string): Promise<void> {
+    this.showBuffering(true);
+    try {
+      const playlist = await resolveUrl(url);
+      this.playlistManager = new PlaylistManager(playlist);
+      this.renderPlaylist();
+      await this.playItem(this.playlistManager.currentItem);
+    } catch (err) {
+      this.showBuffering(false);
+      const pe = toPlayerError(err);
+      this.showAlert(pe.message);
+    }
+  }
+
+  async playItem(item: MediaItem | undefined): Promise<void> {
+    if (!item || !this.playlistManager) return;
+    this.showBuffering(true);
+    this.currentTitle.textContent = item.name;
+    this.currentTitle.title = item.name;
+    this.updatePlaylistUI();
+
+    // Clean up previous engine
+    if (this.currentEngine) {
+      this.currentEngine.destroy();
+      this.currentEngine = null;
+    }
+
+    try {
+      const provider = PROVIDERS.find((p) => p.id === item.provider);
+      if (!provider) throw new Error(`Provider not found: ${item.provider}`);
+
+      const source = await provider.open(item);
+      const host = {
+        warn: (msg: string) => this.showAlert(msg),
+        fail: (err: unknown) => {
+          const pe = toPlayerError(err);
+          this.showAlert(pe.message);
+        },
+      };
+
+      const { engine, container } = await createPlaybackEngine(this.video, source, host);
+      this.currentEngine = engine;
+
+      this.codecPill.hidden = false;
+      this.codecPill.textContent = container;
+
+      // Check saved resume position
+      const savedSec = await this.playlistManager.getSavedPosition(item);
+      await engine.attach(savedSec);
+
+      this.video.play().catch(() => {
+        // Autoplay policy might require interaction
+      });
+
+      this.setupMediaSession();
+      this.startPositionSaver();
+    } catch (err) {
+      const pe = toPlayerError(err);
+      this.showAlert(pe.message);
+    } finally {
+      this.showBuffering(false);
+    }
+  }
+
+  private setupEventListeners(): void {
+    // Play / Pause
+    this.btnPlayPause.addEventListener('click', () => this.togglePlay());
+    this.video.addEventListener('click', () => this.togglePlay());
+    this.video.addEventListener('play', () => this.updatePlayPauseIcon(true));
+    this.video.addEventListener('pause', () => this.updatePlayPauseIcon(false));
+
+    // Next / Previous
+    this.btnNext.addEventListener('click', () => this.playNext());
+    this.btnPrev.addEventListener('click', () => this.playPrevious());
+
+    // Auto-advance on video end
+    this.video.addEventListener('ended', () => {
+      if (this.playlistManager?.isAutoNext() && this.playlistManager.hasNext()) {
+        this.playNext();
+      }
+    });
+
+    // Time & Progress update
+    this.video.addEventListener('timeupdate', () => this.onTimeUpdate());
+    this.video.addEventListener('progress', () => this.onProgress());
+    this.video.addEventListener('waiting', () => this.showBuffering(true));
+    this.video.addEventListener('playing', () => this.showBuffering(false));
+
+    // Timeline seeking
+    this.timelineProgress.addEventListener('click', (e) => this.seekTimeline(e));
+    this.timelineProgress.addEventListener('mousemove', (e) => this.hoverTimeline(e));
+
+    // Volume
+    this.volumeSlider.addEventListener('input', () => {
+      this.video.volume = parseFloat(this.volumeSlider.value);
+      this.video.muted = this.video.volume === 0;
+      this.updateVolumeIcons();
+    });
+    this.btnMute.addEventListener('click', () => {
+      this.video.muted = !this.video.muted;
+      this.updateVolumeIcons();
+    });
+
+    // Speed menu
+    this.btnSpeed.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.speedMenu.hidden = !this.speedMenu.hidden;
+    });
+    this.speedMenu.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const speed = target.dataset.speed;
+      if (speed) {
+        this.setSpeed(parseFloat(speed));
+        this.speedMenu.hidden = true;
+      }
+    });
+    document.addEventListener('click', () => {
+      if (!this.speedMenu.hidden) this.speedMenu.hidden = true;
+    });
+
+    // PiP & Fullscreen
+    this.btnPip.addEventListener('click', () => this.togglePiP());
+    this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
+    document.addEventListener('fullscreenchange', () => {
+      const isFs = !!document.fullscreenElement;
+      this.iconFsEnter.hidden = isFs;
+      this.iconFsExit.hidden = !isFs;
+    });
+
+    // Playlist sidebar toggle
+    this.btnTogglePlaylist.addEventListener('click', () => {
+      this.playlistSidebar.classList.toggle('collapsed');
+    });
+    this.btnClosePlaylist.addEventListener('click', () => {
+      this.playlistSidebar.classList.add('collapsed');
+    });
+    this.chkAutoNext.addEventListener('change', () => {
+      this.playlistManager?.setAutoNext(this.chkAutoNext.checked);
+    });
+
+    // Controls autohide on mouse idle
+    this.wrapper.addEventListener('mousemove', () => this.resetControlsTimer());
+    this.wrapper.addEventListener('mouseenter', () => this.resetControlsTimer());
+    this.wrapper.addEventListener('mouseleave', () => this.wrapper.classList.remove('show-controls'));
+
+    // Toast dismiss
+    this.alertDismiss.addEventListener('click', () => {
+      this.alertToast.hidden = true;
+    });
+  }
+
+  private setupKeyboardShortcuts(): void {
+    document.addEventListener('keydown', (e) => {
+      // Ignore if user is in an input
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          this.togglePlay();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          this.video.currentTime = Math.max(0, this.video.currentTime - 5);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          this.video.currentTime = Math.min(this.video.duration || Infinity, this.video.currentTime + 5);
+          break;
+        case 'j':
+        case 'J':
+          this.video.currentTime = Math.max(0, this.video.currentTime - 10);
+          break;
+        case 'l':
+        case 'L':
+          this.video.currentTime = Math.min(this.video.duration || Infinity, this.video.currentTime + 10);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          this.video.volume = Math.min(1, this.video.volume + 0.05);
+          this.volumeSlider.value = String(this.video.volume);
+          this.updateVolumeIcons();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          this.video.volume = Math.max(0, this.video.volume - 0.05);
+          this.volumeSlider.value = String(this.video.volume);
+          this.updateVolumeIcons();
+          break;
+        case 'm':
+        case 'M':
+          this.video.muted = !this.video.muted;
+          this.updateVolumeIcons();
+          break;
+        case 'f':
+        case 'F':
+          this.toggleFullscreen();
+          break;
+        case 'p':
+        case 'P':
+          if (e.shiftKey) {
+            this.playPrevious();
+          } else {
+            this.togglePiP();
+          }
+          break;
+        case 'n':
+        case 'N':
+          if (e.shiftKey) this.playNext();
+          break;
+      }
+    });
+  }
+
+  private togglePlay(): void {
+    if (this.video.paused) {
+      this.video.play();
+    } else {
+      this.video.pause();
+    }
+  }
+
+  private updatePlayPauseIcon(isPlaying: boolean): void {
+    this.iconPlay.hidden = isPlaying;
+    this.iconPause.hidden = !isPlaying;
+  }
+
+  private playNext(): void {
+    if (this.playlistManager?.hasNext()) {
+      const nextItem = this.playlistManager.next();
+      this.playItem(nextItem);
+    }
+  }
+
+  private playPrevious(): void {
+    // If playback is more than 3 seconds in, restart current track
+    if (this.video.currentTime > 3) {
+      this.video.currentTime = 0;
+      return;
+    }
+    if (this.playlistManager?.hasPrev()) {
+      const prevItem = this.playlistManager.prev();
+      this.playItem(prevItem);
+    }
+  }
+
+  private onTimeUpdate(): void {
+    const cur = this.video.currentTime;
+    const dur = this.video.duration || 0;
+    this.timeCurrent.textContent = formatTime(cur);
+    this.timeDuration.textContent = formatTime(dur);
+
+    if (dur > 0) {
+      const pct = (cur / dur) * 100;
+      this.playedBar.style.width = `${pct}%`;
+      this.seekThumb.style.left = `${pct}%`;
+    }
+  }
+
+  private onProgress(): void {
+    const dur = this.video.duration || 0;
+    const ranges = this.video.buffered;
+    if (ranges.length > 0 && dur > 0) {
+      const end = ranges.end(ranges.length - 1);
+      const pct = (end / dur) * 100;
+      this.bufferedBar.style.width = `${pct}%`;
+    }
+  }
+
+  private seekTimeline(e: MouseEvent): void {
+    const rect = this.timelineProgress.getBoundingClientRect();
+    const pos = (e.clientX - rect.left) / rect.width;
+    const dur = this.video.duration;
+    if (dur && Number.isFinite(dur)) {
+      this.video.currentTime = pos * dur;
+    }
+  }
+
+  private hoverTimeline(e: MouseEvent): void {
+    const rect = this.timelineProgress.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const dur = this.video.duration || 0;
+    this.timelineTooltip.style.left = `${pos * 100}%`;
+    this.timelineTooltip.textContent = formatTime(pos * dur);
+  }
+
+  private updateVolumeIcons(): void {
+    const muted = this.video.muted || this.video.volume === 0;
+    this.iconVolHigh.hidden = muted;
+    this.iconVolMute.hidden = !muted;
+  }
+
+  private setSpeed(speed: number): void {
+    this.video.playbackRate = speed;
+    this.btnSpeed.textContent = `${speed}x`;
+    this.speedPill.textContent = `${speed}x`;
+    this.speedMenu.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', parseFloat(b.dataset.speed || '1') === speed);
+    });
+  }
+
+  private async togglePiP(): Promise<void> {
+    if (document.pictureInPictureElement) {
+      await document.exitPictureInPicture();
+    } else if (document.pictureInPictureEnabled) {
+      await this.video.requestPictureInPicture();
+    }
+  }
+
+  private toggleFullscreen(): void {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      this.wrapper.requestFullscreen();
+    }
+  }
+
+  private renderPlaylist(): void {
+    if (!this.playlistManager) return;
+    this.playlistCount.textContent = `${this.playlistManager.count} items`;
+    this.playlistBadge.textContent = String(this.playlistManager.count);
+    this.playlistItemsContainer.innerHTML = '';
+
+    this.playlistManager.items.forEach((item, index) => {
+      const el = document.createElement('div');
+      el.className = 'playlist-item';
+      if (index === this.playlistManager?.currentIndex) el.classList.add('active');
+
+      el.innerHTML = `
+        <span class="item-index">${index + 1}</span>
+        <div class="item-info">
+          <div class="item-name" title="${item.name}">${item.name}</div>
+          <div class="item-meta">${item.size ? formatBytes(item.size) : item.provider.toUpperCase()}</div>
+        </div>
+      `;
+
+      el.addEventListener('click', () => {
+        const selected = this.playlistManager?.setIndex(index);
+        this.playItem(selected);
+      });
+
+      this.playlistItemsContainer.appendChild(el);
+    });
+  }
+
+  private updatePlaylistUI(): void {
+    const items = this.playlistItemsContainer.querySelectorAll('.playlist-item');
+    const curIdx = this.playlistManager?.currentIndex ?? -1;
+    items.forEach((el, idx) => {
+      el.classList.toggle('active', idx === curIdx);
+    });
+    this.btnPrev.disabled = !(this.playlistManager?.hasPrev() || this.video.currentTime > 3);
+    this.btnNext.disabled = !(this.playlistManager?.hasNext());
+  }
+
+  private resetControlsTimer(): void {
+    this.wrapper.classList.add('show-controls');
+    if (this.hideControlsTimer) clearTimeout(this.hideControlsTimer);
+    this.hideControlsTimer = window.setTimeout(() => {
+      if (!this.video.paused) {
+        this.wrapper.classList.remove('show-controls');
+      }
+    }, 2800);
+  }
+
+  private showBuffering(show: boolean): void {
+    this.centerIndicator.hidden = !show;
+  }
+
+  private showAlert(msg: string): void {
+    this.alertText.textContent = msg;
+    this.alertToast.hidden = false;
+  }
+
+  private setupMediaSession(): void {
+    this.playlistManager?.updateMediaSession(
+      () => this.video.play(),
+      () => this.video.pause(),
+      () => this.playNext(),
+      () => this.playPrevious(),
+      (to) => { this.video.currentTime = to; }
+    );
+  }
+
+  private startPositionSaver(): void {
+    if (this.savePositionInterval) clearInterval(this.savePositionInterval);
+    this.savePositionInterval = window.setInterval(() => {
+      const item = this.playlistManager?.currentItem;
+      if (item && !this.video.paused) {
+        this.playlistManager?.savePosition(item, this.video.currentTime, this.video.duration);
+      }
+    }, 5000);
+  }
+}
+
+const controller = new PlayerController();
+controller.init();

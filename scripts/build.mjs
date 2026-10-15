@@ -69,7 +69,11 @@ function manifest(target) {
 
 async function buildTarget(target) {
   const outdir = path.join(root, 'dist', target);
-  await rm(outdir, { recursive: true, force: true });
+  try {
+    await rm(outdir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch (err) {
+    // On Windows with OneDrive sync active, directory deletion may be locked; continue to overwrite
+  }
   await mkdir(outdir, { recursive: true });
 
   const common = {

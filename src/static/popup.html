@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudPlay</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <div class="brand">
+        <img src="icons/icon32.png" alt="CloudPlay Logo" width="22" height="22">
+        <span class="brand-title">CloudPlay</span>
+      </div>
+      <button id="btn-open-options" class="btn-icon" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.488.488 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      </button>
+    </header>
+
+    <!-- URL Input form -->
+    <div class="input-section">
+      <label for="url-input" class="label">Paste Video or Folder URL</label>
+      <div class="input-wrapper">
+        <input id="url-input" type="text" placeholder="https://mega.nz/..., drive.google.com/..." autofocus>
+        <button id="btn-paste" class="btn-paste" title="Paste from clipboard">Paste</button>
+      </div>
+      <button id="btn-play" class="btn-primary-action">Play Now</button>
+    </div>
+
+    <!-- Supported badges -->
+    <div class="support-badges">
+      <span class="badge">MEGA</span>
+      <span class="badge">Google Drive</span>
+      <span class="badge">OneDrive</span>
+      <span class="badge">TS / MP4 / MKV</span>
+    </div>
+
+    <!-- History / Recent section -->
+    <section class="history-section">
+      <div class="section-header">
+        <h4>Recent Streams</h4>
+        <button id="btn-clear-history" class="btn-link">Clear</button>
+      </div>
+      <div id="history-list" class="history-list">
+        <div class="empty-state">No recent streams yet</div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

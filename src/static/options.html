@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudPlay Settings</title>
+  <link rel="icon" type="image/png" href="icons/icon32.png">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="settings-container">
+    <header class="header">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="CloudPlay" width="32" height="32">
+        <h2>CloudPlay Settings</h2>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="card">
+        <h3>Playback Defaults</h3>
+        
+        <div class="setting-row">
+          <div class="setting-label">
+            <label for="pref-speed">Default Speed</label>
+            <span class="subtext">Initial playback rate for videos</span>
+          </div>
+          <select id="pref-speed" class="select-input">
+            <option value="0.75">0.75x</option>
+            <option value="1.0" selected>1.0x (Normal)</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2.0">2.0x</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <label for="pref-auto-next">Auto-play Next</label>
+            <span class="subtext">Advance to the next video when current one finishes</span>
+          </div>
+          <input id="pref-auto-next" type="checkbox" checked class="checkbox">
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <label for="pref-resume">Resume Playback</label>
+            <span class="subtext">Remember playback time position per video</span>
+          </div>
+          <input id="pref-resume" type="checkbox" checked class="checkbox">
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Buffer & Streaming</h3>
+        
+        <div class="setting-row">
+          <div class="setting-label">
+            <label for="pref-chunk-size">Stream Chunk Size</label>
+            <span class="subtext">Default read chunk size for cloud range requests</span>
+          </div>
+          <select id="pref-chunk-size" class="select-input">
+            <option value="1048576">1 MB (Low latency)</option>
+            <option value="2097152" selected>2 MB (Balanced)</option>
+            <option value="4194304">4 MB (High throughput)</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card danger-card">
+        <h3>Storage & Privacy</h3>
+        <div class="setting-row">
+          <div class="setting-label">
+            <span>Clear Saved Positions & History</span>
+            <span class="subtext">Removes all stored video resume timestamps</span>
+          </div>
+          <button id="btn-clear-all" class="btn-danger">Clear All Data</button>
+        </div>
+      </section>
+
+      <div class="footer-save">
+        <button id="btn-save" class="btn-save">Save Settings</button>
+        <span id="save-status" class="save-status"></span>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
