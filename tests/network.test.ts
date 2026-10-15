@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { AdaptiveChunkManager } from '../src/lib/network.js';
+import { describe, it, expect, vi } from 'vitest';
+import { AdaptiveChunkManager, PrefetchedByteSource } from '../src/lib/network.js';
+import { RangeByteSource } from '../src/core/types.js';
+import { readAll } from '../src/lib/util.js';
 
 describe('Network & Adaptive Streaming', () => {
   it('dynamically adapts chunk size based on observed throughput', () => {
@@ -36,4 +38,41 @@ describe('Network & Adaptive Streaming', () => {
     manager.recordSample(50 * 1024, 2000);
     expect(manager.chunkSize).toBe(256 * 1024); // Floor at custom min
   });
+
+  it('PrefetchedByteSource serves initial ranges instantly from memory without network read', async () => {
+    const mockData = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+    const underlyingRead = vi.fn();
+    const mockUnderlying: RangeByteSource = {
+      name: 'video.mp4',
+      size: 100,
+      encrypted: false,
+      read: underlyingRead,
+    };
+
+    const prefetchedBuf = mockData.subarray(0, 5); // [10, 20, 30, 40, 50]
+    const source = new PrefetchedByteSource(mockUnderlying, 0, prefetchedBuf);
+
+    // Read within prefetched range [0, 2] -> should get [10, 20, 30] without hitting underlying
+    const stream1 = await source.read(0, 2);
+    const res1 = await readAll(stream1);
+    expect(Array.from(res1)).toEqual([10, 20, 30]);
+    expect(underlyingRead).not.toHaveBeenCalled();
+
+    // Read outside prefetched range [5, 9] -> should delegate to underlying
+    const remainingSlice = mockData.subarray(5, 10);
+    underlyingRead.mockResolvedValueOnce(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(remainingSlice);
+          controller.close();
+        },
+      })
+    );
+
+    const stream2 = await source.read(5, 9);
+    const res2 = await readAll(stream2);
+    expect(Array.from(res2)).toEqual([60, 70, 80, 90, 100]);
+    expect(underlyingRead).toHaveBeenCalledWith(5, 9, undefined);
+  });
 });
+

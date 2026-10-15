@@ -2,10 +2,11 @@ import { resolveUrl, PROVIDERS } from '../providers/index.js';
 import { createLocalPlaylist } from '../providers/local.js';
 import { PlaylistManager } from '../core/playlist.js';
 import { createPlaybackEngine } from '../engines/index.js';
-import { PlaybackEngine, MediaItem, SubtitleTrackInfo } from '../core/types.js';
+import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl, isSubtitleName } from '../lib/subtitles.js';
+import { PrefetchedByteSource } from '../lib/network.js';
 import { ext } from '../lib/browser.js';
 
 class PlayerController {
@@ -76,6 +77,12 @@ class PlayerController {
   private hideControlsTimer: number | null = null;
   private savePositionInterval: number | null = null;
   private activeSubTrack: HTMLTrackElement | null = null;
+  private prefetchedNext: {
+    itemId: string;
+    source: RangeByteSource;
+    abortController: AbortController;
+  } | null = null;
+  private isPrefetchingNext = false;
 
   async init(): Promise<void> {
     this.setupEventListeners();
@@ -161,10 +168,19 @@ class PlayerController {
     }
 
     try {
-      const provider = PROVIDERS.find((p) => p.id === item.provider);
-      if (!provider) throw new Error(`Provider not found: ${item.provider}`);
-
-      const source = await provider.open(item);
+      let source: RangeByteSource;
+      if (this.prefetchedNext && this.prefetchedNext.itemId === item.id) {
+        source = this.prefetchedNext.source;
+        this.prefetchedNext = null;
+      } else {
+        if (this.prefetchedNext) {
+          this.prefetchedNext.abortController.abort();
+          this.prefetchedNext = null;
+        }
+        const provider = PROVIDERS.find((p) => p.id === item.provider);
+        if (!provider) throw new Error(`Provider not found: ${item.provider}`);
+        source = await provider.open(item);
+      }
       const host = {
         warn: (msg: string) => this.showWarning(msg),
         fail: (err: unknown) => {
@@ -525,6 +541,43 @@ class PlayerController {
       const pct = (cur / dur) * 100;
       this.playedBar.style.width = `${pct}%`;
       this.seekThumb.style.left = `${pct}%`;
+
+      // Pre-resolve next item and prefetch initial 1 MB at 80% progress
+      if (
+        cur / dur >= 0.8 &&
+        !this.isPrefetchingNext &&
+        this.playlistManager?.hasNext() &&
+        this.playlistManager.isAutoNext()
+      ) {
+        const nextItem = this.playlistManager.items[this.playlistManager.currentIndex + 1];
+        if (nextItem && (!this.prefetchedNext || this.prefetchedNext.itemId !== nextItem.id)) {
+          this.prefetchNextItem(nextItem);
+        }
+      }
+    }
+  }
+
+  private async prefetchNextItem(nextItem: MediaItem): Promise<void> {
+    this.isPrefetchingNext = true;
+    const ac = new AbortController();
+    try {
+      const provider = PROVIDERS.find((p) => p.id === nextItem.provider);
+      if (!provider) return;
+      const baseSource = await provider.open(nextItem);
+      const prefetchLen = Math.min(1024 * 1024, baseSource.size > 0 ? baseSource.size : 1024 * 1024);
+      const stream = await baseSource.read(0, prefetchLen - 1, ac.signal);
+      const bytes = await readAll(stream);
+      if (!ac.signal.aborted) {
+        this.prefetchedNext = {
+          itemId: nextItem.id,
+          source: new PrefetchedByteSource(baseSource, 0, bytes),
+          abortController: ac,
+        };
+      }
+    } catch {
+      // Background prefetch error is non-fatal
+    } finally {
+      this.isPrefetchingNext = false;
     }
   }
 

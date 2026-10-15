@@ -1,4 +1,5 @@
 import { PlayerError } from '../core/errors.js';
+import { RangeByteSource } from '../core/types.js';
 import { sleep } from './util.js';
 
 export interface RetryOptions {
@@ -102,3 +103,97 @@ export class AdaptiveChunkManager {
     );
   }
 }
+
+/**
+ * Wraps a RangeByteSource with a pre-buffered initial byte range to allow
+ * zero-latency instant start when transitioning between playlist items.
+ */
+export class PrefetchedByteSource implements RangeByteSource {
+  private underlying: RangeByteSource;
+  private prefetchedBuffer: Uint8Array;
+  private prefetchedStart: number;
+  private prefetchedEnd: number;
+
+  constructor(underlying: RangeByteSource, prefetchedStart: number, prefetchedBuffer: Uint8Array) {
+    this.underlying = underlying;
+    this.prefetchedStart = prefetchedStart;
+    this.prefetchedBuffer = prefetchedBuffer;
+    this.prefetchedEnd = prefetchedStart + prefetchedBuffer.byteLength;
+  }
+
+  get size(): number {
+    return this.underlying.size;
+  }
+
+  get name(): string {
+    return this.underlying.name;
+  }
+
+  get mime(): string | undefined {
+    return this.underlying.mime;
+  }
+
+  get directUrl(): string | undefined {
+    return this.underlying.directUrl;
+  }
+
+  get encrypted(): boolean {
+    return this.underlying.encrypted;
+  }
+
+  refresh(): Promise<string> {
+    if (this.underlying.refresh) {
+      return this.underlying.refresh();
+    }
+    return Promise.resolve(this.underlying.directUrl || '');
+  }
+
+  async read(start: number, end: number, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    // If the requested range falls completely within the prefetched memory buffer
+    if (start >= this.prefetchedStart && end < this.prefetchedEnd) {
+      const sliceStart = start - this.prefetchedStart;
+      const sliceEnd = end - this.prefetchedStart + 1;
+      const slice = this.prefetchedBuffer.subarray(sliceStart, sliceEnd);
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(slice);
+          controller.close();
+        },
+      });
+    }
+
+    // If start is within prefetched buffer but end continues past it
+    if (start >= this.prefetchedStart && start < this.prefetchedEnd && end >= this.prefetchedEnd) {
+      const sliceStart = start - this.prefetchedStart;
+      const initialChunk = this.prefetchedBuffer.subarray(sliceStart);
+      const remainingStream = await this.underlying.read(this.prefetchedEnd, end, signal);
+      const reader = remainingStream.getReader();
+
+      return new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(initialChunk);
+          try {
+            while (true) {
+              if (signal?.aborted) {
+                controller.error(new DOMException('Aborted', 'AbortError'));
+                break;
+              }
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          } finally {
+            reader.releaseLock();
+          }
+        },
+      });
+    }
+
+    // Outside the prefetched range -> delegate directly to underlying source
+    return this.underlying.read(start, end, signal);
+  }
+}
+
