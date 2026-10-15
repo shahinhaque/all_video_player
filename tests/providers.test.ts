@@ -13,6 +13,14 @@ describe('Provider URL Matchers & Parsers', () => {
     expect(gdrive.canHandle(fileUrl)).toBe(true);
     expect(gdrive.extractFileId(fileUrl)).toEqual({ id: '1a2b3c4d5e6f', isFolder: false });
 
+    const multiAccountUrl = new URL('https://drive.google.com/file/u/0/d/1a2b3c4d5e6f/view');
+    expect(gdrive.canHandle(multiAccountUrl)).toBe(true);
+    expect(gdrive.extractFileId(multiAccountUrl)).toEqual({ id: '1a2b3c4d5e6f', isFolder: false });
+
+    const openIdUrl = new URL('https://drive.google.com/open?id=1a2b3c4d5e6f');
+    expect(gdrive.canHandle(openIdUrl)).toBe(true);
+    expect(gdrive.extractFileId(openIdUrl)).toEqual({ id: '1a2b3c4d5e6f', isFolder: false });
+
     const folderUrl = new URL('https://drive.google.com/drive/folders/9z8y7x6w5v4u');
     expect(gdrive.canHandle(folderUrl)).toBe(true);
     expect(gdrive.extractFileId(folderUrl)).toEqual({ id: '9z8y7x6w5v4u', isFolder: true });

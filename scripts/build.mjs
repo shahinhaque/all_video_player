@@ -52,7 +52,7 @@ function manifest(target) {
     icons,
     action: { default_popup: 'popup.html', default_icon: icons, default_title: 'CloudPlay' },
     options_ui: { page: 'options.html', open_in_tab: true },
-    permissions: ['storage', 'contextMenus', 'activeTab'],
+    permissions: ['storage', 'contextMenus', 'activeTab', 'declarativeNetRequest'],
     host_permissions: HOSTS,
     optional_host_permissions: ['https://*/*', 'http://*/*'],
     content_scripts: [{ matches: CONTENT_MATCHES, js: ['content.js'], run_at: 'document_idle' }],
