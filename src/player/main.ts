@@ -50,6 +50,10 @@ class PlayerController {
   private btnOpenFile = document.getElementById('btn-open-file') as HTMLElement;
   private filePickerInput = document.getElementById('file-picker-input') as HTMLInputElement;
 
+  private btnShortcuts = document.getElementById('btn-shortcuts') as HTMLElement;
+  private shortcutsModal = document.getElementById('shortcuts-modal') as HTMLElement;
+  private btnCloseShortcuts = document.getElementById('btn-close-shortcuts') as HTMLElement;
+
   private btnTogglePlaylist = document.getElementById('btn-toggle-playlist') as HTMLElement;
   private btnClosePlaylist = document.getElementById('btn-close-playlist') as HTMLElement;
   private playlistSidebar = document.getElementById('playlist-sidebar') as HTMLElement;
@@ -251,6 +255,23 @@ class PlayerController {
     this.wrapper.addEventListener('mouseenter', () => this.resetControlsTimer());
     this.wrapper.addEventListener('mouseleave', () => this.wrapper.classList.remove('show-controls'));
 
+    // Keyboard shortcuts modal
+    if (this.btnShortcuts && this.shortcutsModal) {
+      this.btnShortcuts.addEventListener('click', () => {
+        this.shortcutsModal.hidden = !this.shortcutsModal.hidden;
+      });
+      if (this.btnCloseShortcuts) {
+        this.btnCloseShortcuts.addEventListener('click', () => {
+          this.shortcutsModal.hidden = true;
+        });
+      }
+      this.shortcutsModal.addEventListener('click', (e) => {
+        if (e.target === this.shortcutsModal) {
+          this.shortcutsModal.hidden = true;
+        }
+      });
+    }
+
     // Toast dismiss
     this.alertDismiss.addEventListener('click', () => {
       this.alertToast.hidden = true;
@@ -263,6 +284,16 @@ class PlayerController {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
 
       switch (e.key) {
+        case '?':
+          if (this.shortcutsModal) {
+            this.shortcutsModal.hidden = !this.shortcutsModal.hidden;
+          }
+          break;
+        case 'Escape':
+          if (this.shortcutsModal && !this.shortcutsModal.hidden) {
+            this.shortcutsModal.hidden = true;
+          }
+          break;
         case ' ':
           e.preventDefault();
           this.togglePlay();

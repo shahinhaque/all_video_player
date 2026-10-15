@@ -9,9 +9,12 @@ interface HistoryEntry {
 const urlInput = document.getElementById('url-input') as HTMLInputElement;
 const btnPaste = document.getElementById('btn-paste') as HTMLButtonElement;
 const btnPlay = document.getElementById('btn-play') as HTMLButtonElement;
+const btnDemoStream = document.getElementById('btn-demo-stream') as HTMLButtonElement;
 const btnOpenOptions = document.getElementById('btn-open-options') as HTMLButtonElement;
 const btnClearHistory = document.getElementById('btn-clear-history') as HTMLButtonElement;
 const historyList = document.getElementById('history-list') as HTMLElement;
+
+const SAMPLE_TS_URL = 'https://test-streams.mux.dev/test_001/stream.ts';
 
 async function init() {
   btnPaste?.addEventListener('click', async () => {
@@ -25,6 +28,11 @@ async function init() {
 
   btnPlay?.addEventListener('click', () => {
     launchStream(urlInput.value);
+  });
+
+  btnDemoStream?.addEventListener('click', () => {
+    urlInput.value = SAMPLE_TS_URL;
+    launchStream(SAMPLE_TS_URL);
   });
 
   urlInput?.addEventListener('keydown', (e) => {

@@ -4,12 +4,14 @@ import { GDriveProvider } from './gdrive.js';
 import { OneDriveProvider } from './onedrive.js';
 import { MegaProvider } from './mega.js';
 import { LocalProvider } from './local.js';
+import { DirectProvider } from './direct.js';
 
 export const PROVIDERS: SourceProvider[] = [
   new MegaProvider(),
   new GDriveProvider(),
   new OneDriveProvider(),
   new LocalProvider(),
+  new DirectProvider(),
 ];
 
 export function findProvider(url: URL): SourceProvider | undefined {

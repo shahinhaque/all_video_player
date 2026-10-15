@@ -23,7 +23,10 @@
         <div class="top-actions">
           <span id="codec-pill" class="pill pill-codec" hidden>TS</span>
           <span id="speed-pill" class="pill pill-subtle">1.0x</span>
-          <button id="btn-toggle-playlist" class="btn-icon" title="Toggle Playlist (L)" aria-label="Toggle Playlist">
+          <button id="btn-shortcuts" class="btn-icon" title="Keyboard Shortcuts (?)" aria-label="Keyboard Shortcuts">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </button>
+          <button id="btn-toggle-playlist" class="btn-icon" title="Toggle Playlist" aria-label="Toggle Playlist">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
             <span id="playlist-badge" class="badge">0</span>
           </button>
@@ -152,6 +155,29 @@
         </label>
       </div>
     </aside>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div id="shortcuts-modal" class="modal-backdrop" hidden>
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Keyboard Shortcuts</h3>
+          <button id="btn-close-shortcuts" class="btn-icon">&times;</button>
+        </div>
+        <div class="modal-grid">
+          <div class="shortcut-row"><kbd>Space</kbd> <span>Play / Pause</span></div>
+          <div class="shortcut-row"><kbd>←</kbd> <kbd>→</kbd> <span>Seek ±5 seconds</span></div>
+          <div class="shortcut-row"><kbd>J</kbd> <kbd>L</kbd> <span>Seek ±10 seconds</span></div>
+          <div class="shortcut-row"><kbd>↑</kbd> <kbd>↓</kbd> <span>Volume ±5%</span></div>
+          <div class="shortcut-row"><kbd>M</kbd> <span>Mute / Unmute</span></div>
+          <div class="shortcut-row"><kbd>F</kbd> <span>Toggle Fullscreen</span></div>
+          <div class="shortcut-row"><kbd>P</kbd> <span>Picture-in-Picture</span></div>
+          <div class="shortcut-row"><kbd>C</kbd> <span>Toggle Subtitles</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>N</kbd> <span>Next Video</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>P</kbd> <span>Previous Video</span></div>
+          <div class="shortcut-row"><kbd>?</kbd> <span>Show Shortcuts</span></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="player.js"></script>

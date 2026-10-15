@@ -44,4 +44,23 @@ describe('Provider URL Matchers & Parsers', () => {
       subFileId: undefined,
     });
   });
+
+  it('correctly identifies and resolves direct video URLs', async () => {
+    const { DirectProvider } = await import('../src/providers/direct.js');
+    const direct = new DirectProvider();
+
+    const tsUrl = new URL('https://test-streams.mux.dev/test_001/stream.ts');
+    expect(direct.canHandle(tsUrl)).toBe(true);
+
+    const mp4Url = new URL('https://cdn.example.com/videos/movie.mp4');
+    expect(direct.canHandle(mp4Url)).toBe(true);
+
+    const nonVideoUrl = new URL('https://example.com/document.pdf');
+    expect(direct.canHandle(nonVideoUrl)).toBe(false);
+
+    const playlist = await direct.resolve(tsUrl);
+    expect(playlist.items.length).toBe(1);
+    expect(playlist.items[0].name).toBe('stream.ts');
+    expect(playlist.items[0].provider).toBe('http');
+  });
 });
