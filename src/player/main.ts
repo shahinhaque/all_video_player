@@ -2,7 +2,7 @@ import { resolveUrl, PROVIDERS } from '../providers/index.js';
 import { createLocalPlaylist } from '../providers/local.js';
 import { PlaylistManager } from '../core/playlist.js';
 import { createPlaybackEngine } from '../engines/index.js';
-import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource } from '../core/types.js';
+import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource, AudioTrackInfo, EngineHost } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl, isSubtitleName } from '../lib/subtitles.js';
@@ -47,9 +47,22 @@ class PlayerController {
   private timeCurrent = document.getElementById('time-current') as HTMLElement;
   private timeDuration = document.getElementById('time-duration') as HTMLElement;
 
+  private btnAudio = document.getElementById('btn-audio') as HTMLElement;
+  private audioMenu = document.getElementById('audio-menu') as HTMLElement;
+  private audioTrackList = document.getElementById('audio-track-list') as HTMLElement;
   private btnSpeed = document.getElementById('btn-speed') as HTMLElement;
   private speedMenu = document.getElementById('speed-menu') as HTMLElement;
   private btnCc = document.getElementById('btn-cc') as HTMLElement;
+  private subtitlesMenu = document.getElementById('subtitles-menu') as HTMLElement;
+  private subtitleTrackList = document.getElementById('subtitle-track-list') as HTMLElement;
+  private btnUploadSub = document.getElementById('btn-upload-sub') as HTMLElement;
+  private subUploadInput = document.getElementById('sub-upload-input') as HTMLInputElement;
+
+  private currentAudioTracks: AudioTrackInfo[] = [];
+  private activeAudioTrackId: string | null = null;
+  private currentSubtitleTracks: SubtitleTrackInfo[] = [];
+  private activeSubtitleTrackId: string | null = null;
+
   private btnPip = document.getElementById('btn-pip') as HTMLElement;
   private btnFullscreen = document.getElementById('btn-fullscreen') as HTMLElement;
   private iconFsEnter = document.getElementById('icon-fs-enter') as HTMLElement;
@@ -190,7 +203,14 @@ class PlayerController {
         if (!provider) throw new Error(`Provider not found: ${item.provider}`);
         source = await provider.open(item);
       }
-      const host = {
+      this.currentAudioTracks = [];
+      this.activeAudioTrackId = null;
+      this.currentSubtitleTracks = item.subtitles ? [...item.subtitles] : [];
+      this.activeSubtitleTrackId = null;
+      this.renderAudioTracksMenu();
+      this.renderSubtitleTracksMenu();
+
+      const host: EngineHost = {
         warn: (msg: string) => this.showWarning(msg),
         fail: (err: unknown) => {
           const pe = toPlayerError(err);
@@ -201,6 +221,22 @@ class PlayerController {
             return;
           }
           this.showAlert(pe.message);
+        },
+        onAudioTracksDiscovered: (tracks: AudioTrackInfo[], selectedId?: string) => {
+          this.currentAudioTracks = tracks;
+          this.activeAudioTrackId = selectedId || (tracks[0] ? tracks[0].id : null);
+          this.renderAudioTracksMenu();
+          if (tracks.length > 1) {
+            this.showAlert(`Discovered ${tracks.length} audio tracks (Click ♫ icon to change).`);
+          }
+        },
+        onSubtitleTracksDiscovered: (tracks: SubtitleTrackInfo[]) => {
+          for (const trk of tracks) {
+            if (!this.currentSubtitleTracks.some((s) => s.id === trk.id)) {
+              this.currentSubtitleTracks.push(trk);
+            }
+          }
+          this.renderSubtitleTracksMenu();
         },
       };
 
@@ -304,10 +340,20 @@ class PlayerController {
       ext.storage.local.set({ muted: this.video.muted }).catch(() => {});
     });
 
+    // Audio Tracks menu
+    this.btnAudio?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.audioMenu.hidden = !this.audioMenu.hidden;
+      this.speedMenu.hidden = true;
+      this.subtitlesMenu.hidden = true;
+    });
+
     // Speed menu
     this.btnSpeed.addEventListener('click', (e) => {
       e.stopPropagation();
       this.speedMenu.hidden = !this.speedMenu.hidden;
+      if (this.audioMenu) this.audioMenu.hidden = true;
+      if (this.subtitlesMenu) this.subtitlesMenu.hidden = true;
     });
     this.speedMenu.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
@@ -317,12 +363,34 @@ class PlayerController {
         this.speedMenu.hidden = true;
       }
     });
-    document.addEventListener('click', () => {
-      if (!this.speedMenu.hidden) this.speedMenu.hidden = true;
+
+    // Subtitles (CC) menu
+    this.btnCc.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.subtitlesMenu.hidden = !this.subtitlesMenu.hidden;
+      this.speedMenu.hidden = true;
+      if (this.audioMenu) this.audioMenu.hidden = true;
     });
 
-    // Subtitles (CC)
-    this.btnCc.addEventListener('click', () => this.toggleSubtitles());
+    // Upload subtitle action
+    this.btnUploadSub?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.subUploadInput.click();
+      this.subtitlesMenu.hidden = true;
+    });
+    this.subUploadInput?.addEventListener('change', () => {
+      const files = Array.from(this.subUploadInput.files || []);
+      if (files.length > 0) {
+        this.attachSubtitleFile(files[0]);
+      }
+      this.subUploadInput.value = '';
+    });
+
+    document.addEventListener('click', () => {
+      if (!this.speedMenu.hidden) this.speedMenu.hidden = true;
+      if (this.audioMenu && !this.audioMenu.hidden) this.audioMenu.hidden = true;
+      if (this.subtitlesMenu && !this.subtitlesMenu.hidden) this.subtitlesMenu.hidden = true;
+    });
 
     // PiP & Fullscreen
     this.btnPip.addEventListener('click', () => this.togglePiP());
@@ -484,7 +552,12 @@ class PlayerController {
           break;
         case 'c':
         case 'C':
-          this.toggleSubtitles();
+          if (this.currentSubtitleTracks.length > 0) {
+            const nextId = this.activeSubtitleTrackId == null ? this.currentSubtitleTracks[0].id : null;
+            this.selectSubtitleTrack(nextId);
+          } else {
+            this.showAlert('No subtitle tracks available.');
+          }
           break;
         case 'n':
         case 'N':
@@ -826,17 +899,119 @@ class PlayerController {
     );
   }
 
-  private toggleSubtitles(): void {
-    if (!this.activeSubTrack) {
-      this.showAlert('No subtitle track loaded. Drop an .srt, .vtt, or .ass file to attach subtitles.');
+  private renderAudioTracksMenu(): void {
+    if (!this.audioTrackList) return;
+    this.audioTrackList.innerHTML = '';
+
+    if (this.currentAudioTracks.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'dropdown-empty';
+      empty.textContent = 'Default Audio';
+      this.audioTrackList.appendChild(empty);
       return;
     }
-    const track = this.video.textTracks[0];
-    if (track) {
-      const isShowing = track.mode === 'showing';
-      track.mode = isShowing ? 'hidden' : 'showing';
-      this.btnCc.classList.toggle('active', !isShowing);
+
+    this.currentAudioTracks.forEach((trk) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.role = 'menuitem';
+      btn.className = trk.id === this.activeAudioTrackId ? 'active' : '';
+      btn.textContent = trk.label;
+      btn.title = trk.label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.selectAudioTrack(trk.id);
+        if (this.audioMenu) this.audioMenu.hidden = true;
+      });
+      this.audioTrackList.appendChild(btn);
+    });
+  }
+
+  private async selectAudioTrack(trackId: string): Promise<void> {
+    this.activeAudioTrackId = trackId;
+    this.renderAudioTracksMenu();
+    if (this.currentEngine?.setAudioTrack) {
+      await this.currentEngine.setAudioTrack(trackId);
     }
+    const trk = this.currentAudioTracks.find((t) => t.id === trackId);
+    this.showAlert(`Audio track: ${trk ? trk.label : trackId}`);
+  }
+
+  private renderSubtitleTracksMenu(): void {
+    if (!this.subtitleTrackList) return;
+    this.subtitleTrackList.innerHTML = '';
+
+    // "Off" option
+    const offBtn = document.createElement('button');
+    offBtn.type = 'button';
+    offBtn.role = 'menuitem';
+    offBtn.className = this.activeSubtitleTrackId == null ? 'active' : '';
+    offBtn.textContent = 'Off';
+    offBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.selectSubtitleTrack(null);
+      if (this.subtitlesMenu) this.subtitlesMenu.hidden = true;
+    });
+    this.subtitleTrackList.appendChild(offBtn);
+
+    this.currentSubtitleTracks.forEach((trk) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.role = 'menuitem';
+      btn.className = trk.id === this.activeSubtitleTrackId ? 'active' : '';
+      btn.textContent = trk.label || trk.name;
+      btn.title = trk.name;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.selectSubtitleTrack(trk.id);
+        if (this.subtitlesMenu) this.subtitlesMenu.hidden = true;
+      });
+      this.subtitleTrackList.appendChild(btn);
+    });
+
+    this.btnCc.classList.toggle('active', this.activeSubtitleTrackId != null);
+  }
+
+  private async selectSubtitleTrack(trackId: string | null): Promise<void> {
+    this.activeSubtitleTrackId = trackId;
+
+    if (!trackId) {
+      if (this.activeSubTrack) {
+        this.activeSubTrack.remove();
+        this.activeSubTrack = null;
+      }
+      if (this.video.textTracks) {
+        for (let i = 0; i < this.video.textTracks.length; i++) {
+          this.video.textTracks[i].mode = 'disabled';
+        }
+      }
+      if (this.currentEngine?.setSubtitleTrack) {
+        await this.currentEngine.setSubtitleTrack(null);
+      }
+      this.renderSubtitleTracksMenu();
+      this.showAlert('Subtitles turned off.');
+      return;
+    }
+
+    const trk = this.currentSubtitleTracks.find((s) => s.id === trackId);
+    if (!trk) return;
+
+    if (trackId.startsWith('mkv-sub-')) {
+      // Embedded MKV subtitle track
+      if (this.activeSubTrack) {
+        this.activeSubTrack.remove();
+        this.activeSubTrack = null;
+      }
+      if (this.currentEngine?.setSubtitleTrack) {
+        await this.currentEngine.setSubtitleTrack(trackId);
+      }
+    } else {
+      // Companion external subtitle
+      await this.loadCompanionSubtitle(trk);
+    }
+
+    this.renderSubtitleTracksMenu();
+    this.showAlert(`Subtitles: ${trk.label || trk.name}`);
   }
 
   private async attachSubtitleFile(file: File): Promise<void> {
@@ -861,6 +1036,20 @@ class PlayerController {
       this.activeSubTrack = track;
       this.video.textTracks[0].mode = 'showing';
       this.btnCc.classList.add('active');
+
+      const customId = `uploaded-${Date.now()}`;
+      const newSub: SubtitleTrackInfo = {
+        id: customId,
+        name: file.name,
+        label: file.name,
+        srclang: 'en',
+        provider: 'local',
+        ref: {},
+      };
+      this.currentSubtitleTracks.push(newSub);
+      this.activeSubtitleTrackId = customId;
+      this.renderSubtitleTracksMenu();
+
       this.showAlert(`Loaded subtitles: ${file.name}`);
     } catch {
       this.showAlert('Failed to parse subtitle file.');

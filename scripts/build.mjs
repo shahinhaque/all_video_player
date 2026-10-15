@@ -129,7 +129,9 @@ async function buildTarget(target) {
 async function report(target, outdir, metas) {
   const outputs = Object.assign({}, ...metas.map((m) => m.outputs));
   const gz = async (rel) => gzipSync(await readFile(path.join(root, rel))).length;
-  const entries = Object.keys(outputs).filter((k) => outputs[k].entryPoint);
+  const entries = Object.keys(outputs).filter(
+    (k) => outputs[k].entryPoint && !k.includes('/chunks/') && !k.includes('\\chunks\\')
+  );
   const eager = new Set();
   const visit = (k) => {
     if (eager.has(k)) return;

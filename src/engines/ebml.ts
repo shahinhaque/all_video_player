@@ -132,6 +132,15 @@ export function readFloat(data: Uint8Array, offset: number, length: number): num
 }
 
 /**
+ * Reads a UTF-8 string of given byte length from data at offset.
+ */
+export function readEbmlString(data: Uint8Array, offset: number, length: number): string {
+  return new TextDecoder('utf-8')
+    .decode(data.subarray(offset, offset + length))
+    .replace(/\0+$/, '');
+}
+
+/**
  * Common Matroska EBML Element IDs.
  */
 export const EBML_ID = {
@@ -145,7 +154,13 @@ export const EBML_ID = {
   TrackEntry: 0xae,
   TrackNumber: 0xd7,
   TrackType: 0x83,
+  FlagDefault: 0x88,
+  FlagForced: 0x55aa,
+  Name: 0x536e,
+  Language: 0x22b59c,
+  LanguageBCP47: 0x22b59d,
   CodecID: 0x86,
+  CodecName: 0x258688,
   CodecPrivate: 0x63a2,
   VideoSettings: 0xe0,
   PixelWidth: 0xb0,
@@ -158,12 +173,16 @@ export const EBML_ID = {
   SimpleBlock: 0xa3,
   BlockGroup: 0xa0,
   Block: 0xa1,
+  BlockDuration: 0x9b,
 } as const;
 
 export interface TrackMetadata {
   trackNumber: number;
-  trackType: 'video' | 'audio' | 'unknown';
+  trackType: 'video' | 'audio' | 'subtitle' | 'unknown';
   codecId: string;
+  name?: string;
+  language?: string;
+  isDefault?: boolean;
   codecPrivate?: Uint8Array;
   width?: number;
   height?: number;
@@ -234,8 +253,11 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
           const entryEnd = Math.min(len, trkElem.dataOffset + trkElem.dataSize);
 
           let trackNumber = 1;
-          let trackType: 'video' | 'audio' | 'unknown' = 'unknown';
+          let trackType: 'video' | 'audio' | 'subtitle' | 'unknown' = 'unknown';
           let codecId = '';
+          let name: string | undefined;
+          let language: string | undefined;
+          let isDefault = false;
           let codecPrivate: Uint8Array | undefined;
           let width = 0;
           let height = 0;
@@ -252,6 +274,13 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
               const typeNum = readUint(data, field.dataOffset, field.dataSize);
               if (typeNum === 1) trackType = 'video';
               else if (typeNum === 2) trackType = 'audio';
+              else if (typeNum === 17 || typeNum === 0x11) trackType = 'subtitle';
+            } else if (field.id === EBML_ID.Name) {
+              name = readEbmlString(data, field.dataOffset, field.dataSize);
+            } else if (field.id === EBML_ID.Language || field.id === EBML_ID.LanguageBCP47) {
+              language = readEbmlString(data, field.dataOffset, field.dataSize);
+            } else if (field.id === EBML_ID.FlagDefault) {
+              isDefault = readUint(data, field.dataOffset, field.dataSize) === 1;
             } else if (field.id === EBML_ID.CodecID) {
               codecId = new TextDecoder('ascii').decode(
                 data.subarray(field.dataOffset, field.dataOffset + field.dataSize)
@@ -293,6 +322,9 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
             trackNumber,
             trackType,
             codecId,
+            name,
+            language,
+            isDefault,
             codecPrivate,
             width: width || undefined,
             height: height || undefined,
@@ -324,5 +356,43 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
     timecodeScale,
     duration: durationSec,
     tracks,
+  };
+}
+
+export interface MkvBlock {
+  trackNumber: number;
+  timecode: number; // in relative cluster time units
+  isKeyframe: boolean;
+  data: Uint8Array;
+}
+
+/**
+ * Parses a SimpleBlock or Block element payload into trackNumber, timecode, and payload data.
+ */
+export function parseMkvBlock(payload: Uint8Array): MkvBlock | null {
+  if (payload.length < 4) return null;
+  const trk = readVint(payload, 0);
+  if (!trk) return null;
+  let offset = trk.length;
+  if (offset + 3 > payload.length) return null;
+
+  // Int16 signed big-endian relative timecode
+  const timecode = (payload[offset] << 8) | payload[offset + 1];
+  const signedTimecode = (timecode << 16) >> 16;
+  offset += 2;
+
+  // Flags: bit 7 = keyframe (for SimpleBlock)
+  const flags = payload[offset];
+  const isKeyframe = (flags & 0x80) !== 0;
+  offset += 1;
+
+  // Remainder is data
+  const data = payload.subarray(offset);
+
+  return {
+    trackNumber: trk.value,
+    timecode: signedTimecode,
+    isKeyframe,
+    data,
   };
 }

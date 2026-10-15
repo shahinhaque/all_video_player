@@ -209,6 +209,42 @@ export class MkvEngine implements PlaybackEngine {
       }
       this.headerInfo = headerInfo;
 
+      const audioTrks = headerInfo.tracks.filter((t) => t.trackType === 'audio');
+      const subTrks = headerInfo.tracks.filter((t) => t.trackType === 'subtitle');
+
+      const formattedAudio = audioTrks.map((t, i) => {
+        const langStr = t.language ? t.language.toUpperCase() : '';
+        const codecStr = t.codecId.replace(/^A_/, '');
+        const chStr = t.channels === 6 ? '5.1' : t.channels === 2 ? 'Stereo' : t.channels ? `${t.channels}ch` : '';
+        const descParts = [langStr, t.name, codecStr, chStr].filter(Boolean);
+        return {
+          id: String(t.trackNumber),
+          label: descParts.length > 0 ? descParts.join(' - ') : `Track ${i + 1}`,
+          language: t.language,
+          codec: t.codecId,
+          channels: t.channels,
+          isDefault: t.isDefault,
+        };
+      });
+
+      const formattedSubs = subTrks.map((t, i) => ({
+        id: `mkv-sub-${t.trackNumber}`,
+        name: t.name || `${t.language ? t.language.toUpperCase() + ' ' : ''}Subtitle ${i + 1}`,
+        label: t.name || `${t.language ? t.language.toUpperCase() + ' ' : ''}Subtitle ${i + 1} (Embedded)`,
+        srclang: t.language || 'en',
+        provider: 'local' as const,
+        ref: { trackNumber: String(t.trackNumber) },
+        isDefault: t.isDefault,
+      }));
+
+      if (formattedAudio.length > 0) {
+        const chosen = formattedAudio.find((a) => a.isDefault) || formattedAudio[0];
+        this.host.onAudioTracksDiscovered?.(formattedAudio, chosen.id);
+      }
+      if (formattedSubs.length > 0) {
+        this.host.onSubtitleTracksDiscovered?.(formattedSubs);
+      }
+
       if (!this.initSourceBuffer(headerInfo)) {
         throw new PlayerError('codec', 'Browser MSE cannot allocate SourceBuffer for this MKV stream.');
       }

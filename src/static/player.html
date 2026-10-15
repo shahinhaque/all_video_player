@@ -98,6 +98,19 @@
           </div>
 
           <div class="controls-right">
+            <!-- Audio Tracks Menu -->
+            <div id="audio-container" class="dropdown-container">
+              <button id="btn-audio" class="btn-ctrl" title="Audio Tracks" aria-haspopup="menu" aria-expanded="false" aria-label="Audio Tracks">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 3v9.28a4.39 4.39 0 0 0-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>
+              </button>
+              <div id="audio-menu" class="dropdown-menu" role="menu" hidden>
+                <div class="dropdown-header">Audio Tracks</div>
+                <div id="audio-track-list">
+                  <div class="dropdown-empty">Default Audio</div>
+                </div>
+              </div>
+            </div>
+
             <!-- Playback Speed Menu -->
             <div class="dropdown-container">
               <button id="btn-speed" class="btn-ctrl-text" title="Playback Speed" aria-haspopup="menu" aria-expanded="false" aria-label="Playback Speed">1x</button>
@@ -111,10 +124,24 @@
               </div>
             </div>
 
-            <!-- Subtitles (CC) Button -->
-            <button id="btn-cc" class="btn-ctrl" title="Subtitles / Captions (C)" aria-label="Subtitles">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg>
-            </button>
+            <!-- Subtitles (CC) Menu -->
+            <div id="subtitles-container" class="dropdown-container">
+              <button id="btn-cc" class="btn-ctrl" title="Subtitles / Captions (C)" aria-haspopup="menu" aria-expanded="false" aria-label="Subtitles">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg>
+              </button>
+              <div id="subtitles-menu" class="dropdown-menu" role="menu" hidden>
+                <div class="dropdown-header">Subtitles</div>
+                <div id="subtitle-track-list">
+                  <button data-sub-id="off" class="active" role="menuitem">Off</button>
+                </div>
+                <div class="dropdown-divider"></div>
+                <button id="btn-upload-sub" class="btn-dropdown-action" role="menuitem">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                  <span>Upload Subtitle (.srt, .vtt)</span>
+                </button>
+                <input id="sub-upload-input" type="file" accept=".srt,.vtt,.ass,.ssa" style="display:none">
+              </div>
+            </div>
 
             <!-- Picture in Picture -->
             <button id="btn-pip" class="btn-ctrl" title="Picture-in-Picture (P)" aria-label="Picture in Picture">

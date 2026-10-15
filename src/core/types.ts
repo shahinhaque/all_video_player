@@ -58,13 +58,29 @@ export interface SourceProvider {
   open(item: MediaItem, signal?: AbortSignal): Promise<RangeByteSource>;
 }
 
+export interface AudioTrackInfo {
+  id: string;
+  label: string;
+  language?: string;
+  codec?: string;
+  channels?: number;
+  isDefault?: boolean;
+}
+
 export interface EngineHost {
   warn(message: string): void;
   fail(error: unknown): void;
+  onAudioTracksDiscovered?(tracks: AudioTrackInfo[], selectedId?: string): void;
+  onSubtitleTracksDiscovered?(tracks: SubtitleTrackInfo[]): void;
 }
 
 export interface PlaybackEngine {
   readonly kind: 'native' | 'ts' | 'mkv' | 'blob' | 'hls';
   attach(startTime: number): Promise<void>;
   destroy(): void;
+  getAudioTracks?(): AudioTrackInfo[];
+  setAudioTrack?(trackId: string): Promise<void>;
+  getActiveAudioTrack?(): string | null;
+  getSubtitleTracks?(): SubtitleTrackInfo[];
+  setSubtitleTrack?(trackId: string | null): Promise<void>;
 }
