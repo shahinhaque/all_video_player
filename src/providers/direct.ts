@@ -2,6 +2,7 @@ import { SourceProvider, MediaItem, Playlist, RangeByteSource, ProviderId } from
 import { PlayerError } from '../core/errors.js';
 import { isVideoName, guessMime } from '../lib/media.js';
 import { fetchWithRetry } from '../lib/network.js';
+import { ext } from '../lib/browser.js';
 
 export class DirectProvider implements SourceProvider {
   readonly id: ProviderId = 'http';
@@ -14,6 +15,18 @@ export class DirectProvider implements SourceProvider {
 
   async resolve(url: URL): Promise<Playlist> {
     const rawUrl = url.href;
+
+    // In MV3, request origin permission dynamically if needed for arbitrary direct domains
+    if (ext.permissions?.contains) {
+      try {
+        const origin = `${url.protocol}//${url.host}/*`;
+        const has = await ext.permissions.contains({ origins: [origin] });
+        if (!has && ext.permissions.request) {
+          await ext.permissions.request({ origins: [origin] });
+        }
+      } catch {}
+    }
+
     const path = url.pathname;
     let name = path.split('/').filter(Boolean).pop() || 'stream.ts';
 
