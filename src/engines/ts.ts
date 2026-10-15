@@ -1,6 +1,7 @@
 import { PlaybackEngine, RangeByteSource, EngineHost } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { readAll } from '../lib/util.js';
+import { fromTimeRanges, calculateEvictionRanges } from '../lib/buffer.js';
 // Import mux.js mp4 transmuxer
 // @ts-expect-error mux.js doesn't bundle ts types
 import muxjs from 'mux.js';
@@ -29,6 +30,8 @@ export class TsEngine implements PlaybackEngine {
   private chunkSize = 11155 * 188; // 2,097,140 bytes (~2MB, exactly 11,155 MPEG-TS packets)
   private bufferQueue: Uint8Array[] = [];
   private isAppending = false;
+  private isPruning = false;
+  private pruneTimer: any = null;
   private initSegmentAppended = false;
 
   private estimatedDuration = 0;
@@ -68,8 +71,10 @@ export class TsEngine implements PlaybackEngine {
       }
     }, { signal: this.abortCtrl.signal });
 
-    // Hook video seeking event
+    // Hook video seeking and timeupdate for buffer sliding window
     this.video.addEventListener('seeking', this.onSeeking);
+    this.video.addEventListener('timeupdate', this.onTimeUpdate, { signal: this.abortCtrl.signal });
+    this.pruneTimer = setInterval(() => this.pruneBuffer(), 3000);
 
     // Initial feed loop
     this.startStreaming(startTime);
@@ -113,8 +118,12 @@ export class TsEngine implements PlaybackEngine {
       this.sourceBuffer = this.mediaSource.addSourceBuffer(selectedMime);
       this.sourceBuffer.addEventListener('updateend', () => {
         this.isAppending = false;
-        this.drainQueue();
-        this.pruneBuffer();
+        this.isPruning = false;
+        if (this.bufferQueue.length > 0) {
+          this.drainQueue();
+        } else {
+          this.pruneBuffer();
+        }
       });
       this.sourceBuffer.addEventListener('error', (e) => {
         console.warn('SourceBuffer error event:', e);
@@ -161,7 +170,7 @@ export class TsEngine implements PlaybackEngine {
   }
 
   private drainQueue(): void {
-    if (this.isAppending || !this.sourceBuffer || this.sourceBuffer.updating || this.bufferQueue.length === 0) {
+    if (this.isAppending || this.isPruning || !this.sourceBuffer || this.sourceBuffer.updating || this.bufferQueue.length === 0) {
       return;
     }
     const next = this.bufferQueue.shift();
@@ -177,17 +186,34 @@ export class TsEngine implements PlaybackEngine {
   }
 
   private pruneBuffer(): void {
-    // Memory capping: keep 30 seconds behind currentTime and 90 seconds ahead
-    if (!this.sourceBuffer || this.sourceBuffer.updating || this.isDestroyed) return;
-    const ct = this.video.currentTime;
-    if (ct > 35) {
-      try {
-        this.sourceBuffer.remove(0, ct - 30);
-      } catch {
-        // Ignored if buffer is busy
+    // Memory bounding: sliding window retaining [currentTime - 30s, currentTime + 90s]
+    if (!this.sourceBuffer || this.sourceBuffer.updating || this.isAppending || this.isPruning || this.isDestroyed) {
+      return;
+    }
+    if (this.bufferQueue.length > 0) {
+      this.drainQueue();
+      return;
+    }
+
+    try {
+      const ranges = fromTimeRanges(this.sourceBuffer.buffered);
+      const evictions = calculateEvictionRanges(this.video.currentTime, ranges, 30, 90, 2);
+      if (evictions.length > 0) {
+        const [start, end] = evictions[0];
+        if (Number.isFinite(start) && Number.isFinite(end) && end > start && start >= 0) {
+          this.isPruning = true;
+          this.sourceBuffer.remove(start, end);
+        }
       }
+    } catch {
+      this.isPruning = false;
+      // In MSE, remove() can fail if video ended or SourceBuffer state transitioned; safely ignore
     }
   }
+
+  private onTimeUpdate = () => {
+    this.pruneBuffer();
+  };
 
   private async startStreaming(startSec: number = 0): Promise<void> {
     if (startSec > 0 && this.estimatedBitrate > 0) {
@@ -286,8 +312,13 @@ export class TsEngine implements PlaybackEngine {
 
   destroy(): void {
     this.isDestroyed = true;
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
     this.abortCtrl.abort();
     this.video.removeEventListener('seeking', this.onSeeking);
+    this.video.removeEventListener('timeupdate', this.onTimeUpdate);
 
     if (this.transmuxer) {
       try {
