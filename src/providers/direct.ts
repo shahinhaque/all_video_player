@@ -3,7 +3,7 @@ import { PlayerError } from '../core/errors.js';
 import { isVideoName, guessMime } from '../lib/media.js';
 import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 import { fetchWithRetry } from '../lib/network.js';
-import { ext } from '../lib/browser.js';
+import { sendExtensionMessage } from '../lib/browser.js';
 
 /**
  * Fetches text content from a URL, with automatic fallback to extension background worker
@@ -18,44 +18,16 @@ export async function fetchText(url: string): Promise<string> {
   } catch {}
 
   // Fallback to background worker messaging
-  if (typeof ext?.runtime?.sendMessage === 'function') {
-    try {
-      const resp: any = await new Promise((resolve) => {
-        let settled = false;
-        try {
-          const maybePromise = (ext.runtime as any).sendMessage({ type: 'FETCH_TEXT', url }, (cbResp: any) => {
-            if (!settled && cbResp !== undefined) {
-              settled = true;
-              resolve(cbResp);
-            }
-          });
-          if (maybePromise && typeof maybePromise.then === 'function') {
-            maybePromise.then((pResp: any) => {
-              if (!settled) {
-                settled = true;
-                resolve(pResp);
-              }
-            }).catch(() => {
-              if (!settled) {
-                settled = true;
-                resolve(null);
-              }
-            });
-          }
-        } catch {
-          resolve(null);
-        }
-      });
+  const resp = await sendExtensionMessage<{ ok: boolean; text?: string; error?: string }>({
+    type: 'FETCH_TEXT',
+    url,
+  });
 
-      if (resp?.ok && typeof resp.text === 'string') {
-        return resp.text;
-      }
-      if (resp?.error) {
-        throw new PlayerError('network', `Background fetch failed: ${resp.error}`);
-      }
-    } catch (e) {
-      if (e instanceof PlayerError) throw e;
-    }
+  if (resp?.ok && typeof resp.text === 'string') {
+    return resp.text;
+  }
+  if (resp?.error) {
+    throw new PlayerError('network', `Background fetch failed: ${resp.error}`);
   }
 
   throw new PlayerError('network', `Failed to fetch directory from ${url}`);
@@ -332,20 +304,48 @@ export class DirectProvider implements SourceProvider {
       encrypted: false,
       async read(start: number, end: number, readSignal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
         const reqSignal = readSignal || signal;
-        const res = await fetchWithRetry(directUrl, {
-          headers: { Range: `bytes=${start}-${end}` },
-          signal: reqSignal,
-        });
+        try {
+          const res = await fetchWithRetry(directUrl, {
+            headers: { Range: `bytes=${start}-${end}` },
+            signal: reqSignal,
+          });
 
-        if (!res.ok && res.status !== 206) {
-          throw new PlayerError('network', `HTTP ${res.status} error reading range.`);
+          if (!res.ok && res.status !== 206) {
+            throw new PlayerError('network', `HTTP ${res.status} error reading range.`);
+          }
+
+          if (!res.body) {
+            throw new PlayerError('network', 'Empty response body from direct stream.');
+          }
+
+          return res.body;
+        } catch (fetchErr) {
+          // If direct fetch fails (e.g. mixed content / CORS in Firefox), fallback to background worker
+          const rangeResp = await sendExtensionMessage<{
+            ok: boolean;
+            bytes?: Uint8Array | number[];
+            error?: string;
+          }>({
+            type: 'FETCH_RANGE',
+            url: directUrl,
+            range: `bytes=${start}-${end}`,
+          });
+
+          if (rangeResp?.ok && rangeResp.bytes) {
+            const bytesArray = rangeResp.bytes instanceof Uint8Array
+              ? rangeResp.bytes
+              : new Uint8Array(rangeResp.bytes);
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(bytesArray);
+                controller.close();
+              },
+            });
+          }
+
+          throw fetchErr;
         }
-
-        if (!res.body) {
-          throw new PlayerError('network', 'Empty response body from direct stream.');
-        }
-
-        return res.body;
       },
     };
   }

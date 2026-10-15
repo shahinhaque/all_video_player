@@ -59,6 +59,60 @@ function devStub(): Ext {
   } as unknown as Ext;
 }
 
-export const ext: Ext = g.browser?.runtime?.id ? g.browser : g.chrome?.runtime?.id ? g.chrome : devStub();
-export const TARGET = __TARGET__;
-export const IS_EXTENSION = !!(g.browser?.runtime?.id || g.chrome?.runtime?.id);
+function getExtensionApi(): Ext {
+  const anyGlobal = globalThis as any;
+  if (typeof anyGlobal.browser?.runtime?.sendMessage === 'function') {
+    return anyGlobal.browser;
+  }
+  if (typeof anyGlobal.chrome?.runtime?.sendMessage === 'function') {
+    return anyGlobal.chrome;
+  }
+  if (g.browser?.runtime?.id) return g.browser;
+  if (g.chrome?.runtime?.id) return g.chrome;
+  return devStub();
+}
+
+export const ext: Ext = getExtensionApi();
+export const TARGET = typeof __TARGET__ !== 'undefined' ? __TARGET__ : 'chrome';
+export const IS_EXTENSION = !!(
+  (globalThis as any).browser?.runtime?.id ||
+  (globalThis as any).chrome?.runtime?.id ||
+  (globalThis as any).browser?.runtime?.sendMessage ||
+  (globalThis as any).chrome?.runtime?.sendMessage
+);
+
+/**
+ * Sends a message to the extension background script.
+ * In Firefox: uses browser.runtime.sendMessage(msg) with 1 argument returning a Promise.
+ * In Chrome: uses chrome.runtime.sendMessage(msg, callback).
+ */
+export async function sendExtensionMessage<T = any>(message: Record<string, unknown>): Promise<T | null> {
+  const browserApi = (globalThis as any).browser;
+  if (typeof browserApi?.runtime?.sendMessage === 'function') {
+    try {
+      return (await browserApi.runtime.sendMessage(message)) as T;
+    } catch (e) {
+      console.warn('browser.runtime.sendMessage error:', e);
+      return null;
+    }
+  }
+
+  const chromeApi = (globalThis as any).chrome;
+  if (typeof chromeApi?.runtime?.sendMessage === 'function') {
+    return new Promise((resolve) => {
+      try {
+        const maybePromise = chromeApi.runtime.sendMessage(message, (resp: any) => {
+          resolve(resp as T);
+        });
+        if (maybePromise && typeof maybePromise.then === 'function') {
+          maybePromise.then((pResp: any) => resolve(pResp as T)).catch(() => resolve(null));
+        }
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  return null;
+}
+

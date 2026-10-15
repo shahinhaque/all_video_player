@@ -185,7 +185,7 @@ ext.contextMenus?.onClicked.addListener((info, tab) => {
 
 // Handle incoming messages from content scripts and player page
 ext.runtime.onMessage?.addListener((message, sender, sendResponse) => {
-  const isFirefox = typeof (globalThis as any).browser?.runtime?.id !== 'undefined';
+  const isFirefox = (typeof __TARGET__ !== 'undefined' && __TARGET__ === 'firefox') || typeof (globalThis as any).browser?.runtime !== 'undefined';
 
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);
@@ -212,6 +212,36 @@ ext.runtime.onMessage?.addListener((message, sender, sendResponse) => {
     // In Chrome, returning true keeps the sendResponse callback channel open.
     if (isFirefox) {
       return fetchPromise;
+    }
+    return true;
+  }
+
+  if (message?.type === 'FETCH_RANGE' && message?.url) {
+    const rangeHeader = message.range || message.headers?.Range;
+    const fetchRangePromise = fetch(message.url, {
+      headers: rangeHeader ? { Range: rangeHeader } : undefined,
+    })
+      .then(async (res) => {
+        const buf = await res.arrayBuffer();
+        const data = {
+          ok: res.ok || res.status === 206,
+          status: res.status,
+          contentRange: res.headers.get('content-range'),
+          contentLength: res.headers.get('content-length'),
+          contentType: res.headers.get('content-type'),
+          bytes: new Uint8Array(buf),
+        };
+        try { sendResponse(data); } catch {}
+        return data;
+      })
+      .catch((err) => {
+        const data = { ok: false, error: err?.message || String(err) };
+        try { sendResponse(data); } catch {}
+        return data;
+      });
+
+    if (isFirefox) {
+      return fetchRangePromise;
     }
     return true;
   }
