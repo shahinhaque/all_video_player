@@ -1,8 +1,8 @@
 import { RangeByteSource } from '../core/types.js';
 import { readAll } from '../lib/util.js';
-import { isTsName } from '../lib/media.js';
+import { isTsName, isHlsName } from '../lib/media.js';
 
-export type ContainerType = 'ts' | 'mp4' | 'mkv' | 'webm' | 'unknown';
+export type ContainerType = 'ts' | 'mp4' | 'mkv' | 'webm' | 'hls' | 'unknown';
 
 export interface SniffResult {
   container: ContainerType;
@@ -10,6 +10,11 @@ export interface SniffResult {
 }
 
 export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
+  // If extension is explicitly .m3u8/.m3u or mime is HLS mpegurl, prefer HLS
+  if (isHlsName(src.name) || src.mime === 'application/vnd.apple.mpegurl' || src.mime === 'application/x-mpegurl') {
+    return { container: 'hls', mime: 'application/vnd.apple.mpegurl' };
+  }
+
   // If extension is explicitly .ts/.m2ts/.mts or mime is video/mp2t, prefer TS
   if (isTsName(src.name) || src.mime === 'video/mp2t' || src.mime === 'video/ts') {
     return { container: 'ts', mime: 'video/mp2t' };
@@ -20,6 +25,20 @@ export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
     const probeLen = Math.min(1024, src.size > 0 ? src.size - 1 : 1023);
     const stream = await src.read(0, probeLen);
     const bytes = await readAll(stream);
+
+    // 0. HLS Playlist Check: '#EXTM3U'
+    if (
+      bytes.length >= 7 &&
+      bytes[0] === 0x23 && // '#'
+      bytes[1] === 0x45 && // 'E'
+      bytes[2] === 0x58 && // 'X'
+      bytes[3] === 0x54 && // 'T'
+      bytes[4] === 0x4d && // 'M'
+      bytes[5] === 0x33 && // '3'
+      bytes[6] === 0x55 // 'U'
+    ) {
+      return { container: 'hls', mime: 'application/vnd.apple.mpegurl' };
+    }
 
     // 1. MPEG-TS Check: scan for sync byte 0x47 repeating every 188 or 192 bytes
     for (let offset = 0; offset < Math.min(bytes.length - 188, 512); offset++) {

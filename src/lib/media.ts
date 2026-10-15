@@ -15,6 +15,8 @@ const MIME: Record<string, string> = {
   ogg: 'video/ogg',
   flv: 'video/x-flv',
   avi: 'video/x-msvideo',
+  m3u8: 'application/vnd.apple.mpegurl',
+  m3u: 'application/vnd.apple.mpegurl',
 };
 
 export function extOf(name: string): string {
@@ -39,3 +41,8 @@ export function guessMime(name: string, fallback = 'application/octet-stream'): 
 export function isTsName(name: string): boolean {
   return ['ts', 'm2ts', 'mts'].includes(extOf(name));
 }
+
+export function isHlsName(name: string): boolean {
+  return ['m3u8', 'm3u'].includes(extOf(name));
+}
+

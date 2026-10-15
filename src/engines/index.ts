@@ -23,6 +23,22 @@ export async function createPlaybackEngine(
     };
   }
 
+  // If container is HLS (.m3u8), use HlsEngine or native if supported
+  if (sniff.container === 'hls') {
+    const canPlayNativeHls = typeof video.canPlayType === 'function' && !!video.canPlayType('application/vnd.apple.mpegurl');
+    if (canPlayNativeHls && src.directUrl) {
+      return {
+        engine: new NativeEngine(video, src, host),
+        container: 'HLS',
+      };
+    }
+    const { HlsEngine } = await import('./hls.js');
+    return {
+      engine: new HlsEngine(video, src, host, options),
+      container: 'HLS',
+    };
+  }
+
   // If container is MKV in a browser without native Matroska support (Chromium)
   if (sniff.container === 'mkv') {
     const canPlayMkv = typeof video.canPlayType === 'function' && !!video.canPlayType('video/x-matroska');
