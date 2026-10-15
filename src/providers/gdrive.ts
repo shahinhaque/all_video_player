@@ -1,6 +1,7 @@
 import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
+import { fetchWithRetry } from '../lib/network.js';
 
 export class GDriveProvider implements SourceProvider {
   readonly id = 'gdrive';
@@ -171,7 +172,7 @@ export class GDriveProvider implements SourceProvider {
       encrypted: false,
       async read(start: number, end: number, readSignal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
         const reqSignal = readSignal || signal;
-        const res = await fetch(directUrl, {
+        const res = await fetchWithRetry(directUrl, {
           headers: { Range: `bytes=${start}-${end}` },
           signal: reqSignal,
         });

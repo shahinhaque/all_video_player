@@ -2,6 +2,7 @@ import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/ty
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
 import { utf8ToBase64Url } from '../lib/util.js';
+import { fetchWithRetry } from '../lib/network.js';
 
 interface OneDriveItemResponse {
   id: string;
@@ -154,7 +155,7 @@ export class OneDriveProvider implements SourceProvider {
       refresh: refreshDownloadUrl,
       async read(start: number, end: number, readSignal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
         const reqSignal = readSignal || signal;
-        let res = await fetch(directUrl, {
+        let res = await fetchWithRetry(directUrl, {
           headers: { Range: `bytes=${start}-${end}` },
           signal: reqSignal,
         });
@@ -162,7 +163,7 @@ export class OneDriveProvider implements SourceProvider {
         // If downloadUrl expired (typically returns 401/403/404 after an hour), refresh once
         if (res.status === 401 || res.status === 403 || res.status === 410) {
           const newUrl = await refreshDownloadUrl();
-          res = await fetch(newUrl, {
+          res = await fetchWithRetry(newUrl, {
             headers: { Range: `bytes=${start}-${end}` },
             signal: reqSignal,
           });

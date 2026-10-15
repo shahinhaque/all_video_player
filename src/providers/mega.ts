@@ -1,6 +1,7 @@
 import { SourceProvider, MediaItem, Playlist, RangeByteSource } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { isVideoEntry, guessMime } from '../lib/media.js';
+import { fetchWithRetry } from '../lib/network.js';
 
 // Base64URL string <-> Uint8Array utilities for MEGA's format
 export function base64UrlToBytes(str: string): Uint8Array {
@@ -343,7 +344,7 @@ export class MegaProvider implements SourceProvider {
         const reqStart = startBlock * 16;
         const reqEnd = (endBlock + 1) * 16 - 1;
 
-        let res = await fetch(downloadUrl, {
+        let res = await fetchWithRetry(downloadUrl, {
           headers: { Range: `bytes=${reqStart}-${reqEnd}` },
           signal: reqSignal,
         });
@@ -352,7 +353,7 @@ export class MegaProvider implements SourceProvider {
           if (res.status === 509) throw new PlayerError('quota', 'MEGA bandwidth limit exceeded.');
           // Attempt link refresh once
           downloadUrl = await refreshDownloadUrl();
-          res = await fetch(downloadUrl, {
+          res = await fetchWithRetry(downloadUrl, {
             headers: { Range: `bytes=${reqStart}-${reqEnd}` },
             signal: reqSignal,
           });
