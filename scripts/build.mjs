@@ -30,6 +30,17 @@ const CONTENT_MATCHES = [
 
 function manifest(target) {
   const icons = { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' };
+  const basePermissions = [
+    'storage',
+    'contextMenus',
+    'activeTab',
+    'declarativeNetRequest',
+    'declarativeNetRequestWithHostAccess',
+  ];
+  const permissions = target === 'firefox'
+    ? [...basePermissions, 'webRequest', 'webRequestBlocking']
+    : basePermissions;
+
   const m = {
     manifest_version: 3,
     default_locale: 'en',
@@ -40,7 +51,7 @@ function manifest(target) {
     icons,
     action: { default_popup: 'popup.html', default_icon: icons, default_title: '__MSG_actionTitle__' },
     options_ui: { page: 'options.html', open_in_tab: true },
-    permissions: ['storage', 'contextMenus', 'activeTab', 'declarativeNetRequest'],
+    permissions,
     host_permissions: HOSTS,
     optional_host_permissions: ['https://*/*', 'http://*/*'],
     content_scripts: [{ matches: CONTENT_MATCHES, js: ['content.js'], run_at: 'document_idle' }],

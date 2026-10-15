@@ -17,14 +17,45 @@ export async function fetchText(url: string): Promise<string> {
     }
   } catch {}
 
-  // Fallback to background service worker messaging
-  if (ext.runtime?.sendMessage) {
+  // Fallback to background worker messaging
+  if (typeof ext?.runtime?.sendMessage === 'function') {
     try {
-      const resp = await ext.runtime.sendMessage({ type: 'FETCH_TEXT', url });
+      const resp: any = await new Promise((resolve) => {
+        let settled = false;
+        try {
+          const maybePromise = (ext.runtime as any).sendMessage({ type: 'FETCH_TEXT', url }, (cbResp: any) => {
+            if (!settled && cbResp !== undefined) {
+              settled = true;
+              resolve(cbResp);
+            }
+          });
+          if (maybePromise && typeof maybePromise.then === 'function') {
+            maybePromise.then((pResp: any) => {
+              if (!settled) {
+                settled = true;
+                resolve(pResp);
+              }
+            }).catch(() => {
+              if (!settled) {
+                settled = true;
+                resolve(null);
+              }
+            });
+          }
+        } catch {
+          resolve(null);
+        }
+      });
+
       if (resp?.ok && typeof resp.text === 'string') {
         return resp.text;
       }
-    } catch {}
+      if (resp?.error) {
+        throw new PlayerError('network', `Background fetch failed: ${resp.error}`);
+      }
+    } catch (e) {
+      if (e instanceof PlayerError) throw e;
+    }
   }
 
   throw new PlayerError('network', `Failed to fetch directory from ${url}`);

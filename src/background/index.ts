@@ -139,8 +139,39 @@ ext.runtime.onInstalled?.addListener(() => {
     });
   } catch {}
   setupDeclarativeRules();
+  setupFirefoxWebRequest();
 });
 
+// Setup Firefox blocking webRequest for reliable CORS header override
+function setupFirefoxWebRequest() {
+  const browserApi = (globalThis as any).browser;
+  if (!browserApi?.webRequest?.onHeadersReceived) return;
+
+  try {
+    browserApi.webRequest.onHeadersReceived.addListener(
+      (details: any) => {
+        const headers = details.responseHeaders || [];
+        const setHeader = (name: string, value: string) => {
+          const idx = headers.findIndex((h: any) => h.name.toLowerCase() === name.toLowerCase());
+          if (idx !== -1) headers[idx].value = value;
+          else headers.push({ name, value });
+        };
+        setHeader('Access-Control-Allow-Origin', '*');
+        setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        setHeader('Access-Control-Allow-Headers', 'Range, Accept-Ranges, Content-Type, Authorization');
+        setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+        setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return { responseHeaders: headers };
+      },
+      { urls: ['<all_urls>'], types: ['xmlhttprequest', 'media'] },
+      ['blocking', 'responseHeaders']
+    );
+  } catch (err) {
+    console.warn('Firefox webRequest setup failed:', err);
+  }
+}
+
+setupFirefoxWebRequest();
 
 ext.contextMenus?.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'cloudplay-open-link') {
@@ -154,22 +185,36 @@ ext.contextMenus?.onClicked.addListener((info, tab) => {
 
 // Handle incoming messages from content scripts and player page
 ext.runtime.onMessage?.addListener((message, sender, sendResponse) => {
+  const isFirefox = typeof (globalThis as any).browser?.runtime?.id !== 'undefined';
+
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);
     ext.tabs.create({ url: playerUrl, index: (sender.tab?.index ?? 0) + 1 });
     sendResponse({ ok: true });
-    return true;
+    return isFirefox ? Promise.resolve({ ok: true }) : true;
   }
+
   if (message?.type === 'FETCH_TEXT' && message?.url) {
-    fetch(message.url)
+    const fetchPromise = fetch(message.url)
       .then(async (res) => {
         const text = await res.text();
-        sendResponse({ ok: res.ok, text, status: res.status });
+        const data = { ok: res.ok, text, status: res.status };
+        try { sendResponse(data); } catch {}
+        return data;
       })
       .catch((err) => {
-        sendResponse({ ok: false, error: err?.message || String(err) });
+        const data = { ok: false, error: err?.message || String(err) };
+        try { sendResponse(data); } catch {}
+        return data;
       });
+
+    // In Firefox WebExtensions, returning a Promise directly resolves browser.runtime.sendMessage.
+    // In Chrome, returning true keeps the sendResponse callback channel open.
+    if (isFirefox) {
+      return fetchPromise;
+    }
     return true;
   }
-  return true;
+
+  return undefined;
 });
