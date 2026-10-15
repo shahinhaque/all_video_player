@@ -23,6 +23,7 @@ class PlayerController {
   private warningBanner = document.getElementById('warning-banner') as HTMLElement;
   private warningText = document.getElementById('warning-text') as HTMLElement;
   private warningDismiss = document.getElementById('warning-dismiss') as HTMLElement;
+  private subtitleOverlay = document.getElementById('subtitle-overlay') as HTMLElement;
 
   private timelineContainer = document.querySelector('.timeline-container') as HTMLElement;
   private timelineProgress = document.getElementById('timeline-progress') as HTMLElement;
@@ -175,6 +176,7 @@ class PlayerController {
       this.activeSubTrack = null;
       this.btnCc.classList.remove('active');
     }
+    this.displaySubtitle(null);
 
     // Reset preview frame when playing new item
     if (this.drivePreviewFrame) {
@@ -240,6 +242,9 @@ class PlayerController {
             this.activeSubtitleTrackId = selectedId;
           }
           this.renderSubtitleTracksMenu();
+        },
+        onSubtitleText: (text: string | null) => {
+          this.displaySubtitle(text);
         },
       };
 
@@ -975,10 +980,22 @@ class PlayerController {
     this.btnCc.classList.toggle('active', this.activeSubtitleTrackId != null);
   }
 
+  private displaySubtitle(text: string | null): void {
+    if (!this.subtitleOverlay) return;
+    if (text && text.trim().length > 0) {
+      this.subtitleOverlay.textContent = text.trim();
+      this.subtitleOverlay.hidden = false;
+    } else {
+      this.subtitleOverlay.hidden = true;
+      this.subtitleOverlay.textContent = '';
+    }
+  }
+
   private async selectSubtitleTrack(trackId: string | null): Promise<void> {
     this.activeSubtitleTrackId = trackId;
 
     if (!trackId) {
+      this.displaySubtitle(null);
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;

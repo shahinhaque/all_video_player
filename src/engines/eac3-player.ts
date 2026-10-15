@@ -47,12 +47,15 @@ export class Eac3AudioPlayer {
 
   updateVolume(): void {
     if (!this.gainNode || !this.audioCtx) return;
-    const vol = this.video.muted ? 0 : this.video.volume;
+    const vol = this.video.muted ? 0 : (this.video.volume !== undefined ? this.video.volume : 1.0);
     this.gainNode.gain.setValueAtTime(vol, this.audioCtx.currentTime);
   }
 
   pushAudioFrame(timestampSec: number, data: Uint8Array): void {
     if (this.isDestroyed || !this.decoder || !this.audioCtx) return;
+    if (this.audioCtx.state === 'suspended' && !this.video.paused) {
+      this.audioCtx.resume().catch(() => {});
+    }
 
     try {
       const result = this.decoder.decode(data);
@@ -129,6 +132,7 @@ export class Eac3AudioPlayer {
     if (this.audioCtx.state === 'suspended') {
       this.audioCtx.resume().catch(() => {});
     }
+    this.updateVolume();
     this.resetScheduling();
     this.scheduleUpcomingChunks();
   }

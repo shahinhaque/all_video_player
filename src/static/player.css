@@ -95,6 +95,28 @@ html, body {
   opacity: 1;
 }
 
+.subtitle-overlay {
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 85%;
+  text-align: center;
+  color: #ffffff;
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95), 0 0 10px rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.75);
+  padding: 6px 18px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 15;
+  white-space: pre-line;
+  transition: opacity 0.1s ease;
+}
+
 /* Top Bar Overlay */
 .top-bar {
   position: absolute;
