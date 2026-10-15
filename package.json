@@ -9,9 +9,10 @@
     "build:chrome": "node scripts/build.mjs --chrome",
     "build:firefox": "node scripts/build.mjs --firefox",
     "dev": "node scripts/build.mjs --watch --chrome",
+    "package": "node scripts/package.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "check": "npm run typecheck && npm run test && npm run build && npm run package"
   },
   "dependencies": {
     "mux.js": "^7.0.3"

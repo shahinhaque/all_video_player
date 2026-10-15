@@ -1,9 +1,11 @@
 import { resolveUrl, PROVIDERS } from '../providers/index.js';
+import { createLocalPlaylist } from '../providers/local.js';
 import { PlaylistManager } from '../core/playlist.js';
 import { createPlaybackEngine } from '../engines/index.js';
 import { PlaybackEngine, MediaItem } from '../core/types.js';
 import { formatTime, formatBytes } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
+import { createSubtitleTrackUrl } from '../lib/subtitles.js';
 
 class PlayerController {
   private video = document.getElementById('video-element') as HTMLVideoElement;
@@ -38,10 +40,15 @@ class PlayerController {
 
   private btnSpeed = document.getElementById('btn-speed') as HTMLElement;
   private speedMenu = document.getElementById('speed-menu') as HTMLElement;
+  private btnCc = document.getElementById('btn-cc') as HTMLElement;
   private btnPip = document.getElementById('btn-pip') as HTMLElement;
   private btnFullscreen = document.getElementById('btn-fullscreen') as HTMLElement;
   private iconFsEnter = document.getElementById('icon-fs-enter') as HTMLElement;
   private iconFsExit = document.getElementById('icon-fs-exit') as HTMLElement;
+  private dropOverlay = document.getElementById('drop-overlay') as HTMLElement;
+
+  private btnOpenFile = document.getElementById('btn-open-file') as HTMLElement;
+  private filePickerInput = document.getElementById('file-picker-input') as HTMLInputElement;
 
   private btnTogglePlaylist = document.getElementById('btn-toggle-playlist') as HTMLElement;
   private btnClosePlaylist = document.getElementById('btn-close-playlist') as HTMLElement;
@@ -55,6 +62,7 @@ class PlayerController {
   private currentEngine: PlaybackEngine | null = null;
   private hideControlsTimer: number | null = null;
   private savePositionInterval: number | null = null;
+  private activeSubTrack: HTMLTrackElement | null = null;
 
   async init(): Promise<void> {
     this.setupEventListeners();
@@ -190,6 +198,9 @@ class PlayerController {
       if (!this.speedMenu.hidden) this.speedMenu.hidden = true;
     });
 
+    // Subtitles (CC)
+    this.btnCc.addEventListener('click', () => this.toggleSubtitles());
+
     // PiP & Fullscreen
     this.btnPip.addEventListener('click', () => this.togglePiP());
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
@@ -197,6 +208,31 @@ class PlayerController {
       const isFs = !!document.fullscreenElement;
       this.iconFsEnter.hidden = isFs;
       this.iconFsExit.hidden = !isFs;
+    });
+
+    // Local file picker
+    this.btnOpenFile.addEventListener('click', () => {
+      this.filePickerInput.click();
+    });
+    this.filePickerInput.addEventListener('change', () => {
+      const files = Array.from(this.filePickerInput.files || []);
+      if (files.length > 0) this.handleDroppedFiles(files);
+      this.filePickerInput.value = '';
+    });
+
+    // Drag and drop
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      this.dropOverlay.hidden = false;
+    });
+    window.addEventListener('dragleave', (e) => {
+      if (e.relatedTarget === null) this.dropOverlay.hidden = true;
+    });
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      this.dropOverlay.hidden = true;
+      const files = Array.from(e.dataTransfer?.files || []);
+      if (files.length > 0) this.handleDroppedFiles(files);
     });
 
     // Playlist sidebar toggle
@@ -275,6 +311,10 @@ class PlayerController {
           } else {
             this.togglePiP();
           }
+          break;
+        case 'c':
+        case 'C':
+          this.toggleSubtitles();
           break;
         case 'n':
         case 'N':
@@ -452,6 +492,62 @@ class PlayerController {
       () => this.playPrevious(),
       (to) => { this.video.currentTime = to; }
     );
+  }
+
+  private toggleSubtitles(): void {
+    if (!this.activeSubTrack) {
+      this.showAlert('No subtitle track loaded. Drop an .srt or .vtt file to attach subtitles.');
+      return;
+    }
+    const track = this.video.textTracks[0];
+    if (track) {
+      const isShowing = track.mode === 'showing';
+      track.mode = isShowing ? 'hidden' : 'showing';
+      this.btnCc.classList.toggle('active', !isShowing);
+    }
+  }
+
+  private async attachSubtitleFile(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const isSrt = file.name.endsWith('.srt');
+      const trackUrl = createSubtitleTrackUrl(text, isSrt);
+
+      if (this.activeSubTrack) {
+        this.activeSubTrack.remove();
+      }
+
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.label = file.name;
+      track.srclang = 'en';
+      track.src = trackUrl;
+      track.default = true;
+
+      this.video.appendChild(track);
+      this.activeSubTrack = track;
+      this.video.textTracks[0].mode = 'showing';
+      this.btnCc.classList.add('active');
+      this.showAlert(`Loaded subtitles: ${file.name}`);
+    } catch {
+      this.showAlert('Failed to parse subtitle file.');
+    }
+  }
+
+  private handleDroppedFiles(files: File[]): void {
+    const subFiles = files.filter((f) => f.name.endsWith('.srt') || f.name.endsWith('.vtt'));
+    const mediaFiles = files.filter((f) => !f.name.endsWith('.srt') && !f.name.endsWith('.vtt'));
+
+    if (mediaFiles.length > 0) {
+      const playlist = createLocalPlaylist(mediaFiles);
+      this.playlistManager = new PlaylistManager(playlist);
+      this.renderPlaylist();
+      this.playItem(this.playlistManager.currentItem);
+    }
+
+    if (subFiles.length > 0) {
+      this.attachSubtitleFile(subFiles[0]);
+    }
   }
 
   private startPositionSaver(): void {

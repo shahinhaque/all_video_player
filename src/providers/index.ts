@@ -3,11 +3,13 @@ import { PlayerError } from '../core/errors.js';
 import { GDriveProvider } from './gdrive.js';
 import { OneDriveProvider } from './onedrive.js';
 import { MegaProvider } from './mega.js';
+import { LocalProvider } from './local.js';
 
 export const PROVIDERS: SourceProvider[] = [
   new MegaProvider(),
   new GDriveProvider(),
   new OneDriveProvider(),
+  new LocalProvider(),
 ];
 
 export function findProvider(url: URL): SourceProvider | undefined {

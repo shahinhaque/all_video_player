@@ -602,6 +602,43 @@ button {
   cursor: pointer;
 }
 
-.toggle-control input {
-  accent-color: var(--primary);
+.btn-ctrl.active {
+  color: var(--primary);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+/* Drop Overlay */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 15, 25, 0.88);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drop-box {
+  border: 2px dashed var(--primary);
+  border-radius: 16px;
+  padding: 40px 60px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: rgba(31, 41, 55, 0.4);
+}
+
+.drop-box h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drop-box p {
+  font-size: 13px;
+  color: var(--text-muted);
 }

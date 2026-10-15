@@ -98,6 +98,11 @@
               </div>
             </div>
 
+            <!-- Subtitles (CC) Button -->
+            <button id="btn-cc" class="btn-ctrl" title="Subtitles / Captions (C)" aria-label="Subtitles">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg>
+            </button>
+
             <!-- Picture in Picture -->
             <button id="btn-pip" class="btn-ctrl" title="Picture-in-Picture (P)" aria-label="Picture in Picture">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 11h-8v6h8v-6zm4 8V5c0-1.1-.9-2-2-2H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 0H3V5h18v14z"/></svg>
@@ -111,14 +116,31 @@
           </div>
         </div>
       </div>
+
+      <!-- Drag & Drop Overlay -->
+      <div id="drop-overlay" class="drop-overlay" hidden>
+        <div class="drop-box">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#6366f1" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+          <h3>Drop video or subtitle files here</h3>
+          <p>MPEG-TS (.ts), MP4, MKV, WebM, SRT, VTT</p>
+        </div>
+      </div>
     </div>
 
     <!-- Collapsible Playlist Sidebar -->
     <aside id="playlist-sidebar" class="playlist-sidebar">
       <div class="sidebar-header">
-        <h3>Playlist</h3>
-        <span id="playlist-count" class="count-badge">0 items</span>
-        <button id="btn-close-playlist" class="btn-icon" aria-label="Close sidebar">&times;</button>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <h3>Playlist</h3>
+          <span id="playlist-count" class="count-badge">0 items</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button id="btn-open-file" class="btn-icon" title="Open Local Files" aria-label="Open Files">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+          <input id="file-picker-input" type="file" multiple accept="video/*,.ts,.m2ts,.mts,.mkv,.srt,.vtt" style="display:none">
+          <button id="btn-close-playlist" class="btn-icon" aria-label="Close sidebar">&times;</button>
+        </div>
       </div>
       <div id="playlist-items" class="playlist-items">
         <!-- Rendered items -->
