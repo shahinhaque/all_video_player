@@ -19,6 +19,9 @@ class PlayerController {
   private alertToast = document.getElementById('alert-toast') as HTMLElement;
   private alertText = document.getElementById('alert-text') as HTMLElement;
   private alertDismiss = document.getElementById('alert-dismiss') as HTMLElement;
+  private warningBanner = document.getElementById('warning-banner') as HTMLElement;
+  private warningText = document.getElementById('warning-text') as HTMLElement;
+  private warningDismiss = document.getElementById('warning-dismiss') as HTMLElement;
 
   private timelineContainer = document.querySelector('.timeline-container') as HTMLElement;
   private timelineProgress = document.getElementById('timeline-progress') as HTMLElement;
@@ -133,6 +136,10 @@ class PlayerController {
     this.currentTitle.title = item.name;
     this.updatePlaylistUI();
 
+    // Reset UI alerts
+    if (this.alertToast) this.alertToast.hidden = true;
+    if (this.warningBanner) this.warningBanner.hidden = true;
+
     // Reset preview frame when playing new item
     if (this.drivePreviewFrame) {
       this.drivePreviewFrame.hidden = true;
@@ -161,7 +168,7 @@ class PlayerController {
 
       const source = await provider.open(item);
       const host = {
-        warn: (msg: string) => this.showAlert(msg),
+        warn: (msg: string) => this.showWarning(msg),
         fail: (err: unknown) => {
           const pe = toPlayerError(err);
           // If native video playback failed on Google Drive, fallback to Drive preview player
@@ -356,9 +363,12 @@ class PlayerController {
       });
     }
 
-    // Toast dismiss
-    this.alertDismiss.addEventListener('click', () => {
+    // Toast & Warning dismiss
+    this.alertDismiss?.addEventListener('click', () => {
       this.alertToast.hidden = true;
+    });
+    this.warningDismiss?.addEventListener('click', () => {
+      this.warningBanner.hidden = true;
     });
   }
 
@@ -704,6 +714,13 @@ class PlayerController {
   private showAlert(msg: string): void {
     this.alertText.textContent = msg;
     this.alertToast.hidden = false;
+  }
+
+  private showWarning(msg: string): void {
+    if (this.warningText && this.warningBanner) {
+      this.warningText.textContent = msg;
+      this.warningBanner.hidden = false;
+    }
   }
 
   private setupMediaSession(): void {

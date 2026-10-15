@@ -720,6 +720,48 @@ button {
   padding: 0 4px;
 }
 
+/* Warning Banner */
+.warning-banner {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(245, 158, 11, 0.95);
+  color: #0b0f19;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 99;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.warning-banner[hidden] {
+  display: none !important;
+}
+
+.warning-icon {
+  display: flex;
+  align-items: center;
+  color: #0b0f19;
+  flex-shrink: 0;
+}
+
+.warning-banner .btn-icon-xs {
+  background: none;
+  border: none;
+  color: #0b0f19;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 0 4px;
+  margin-left: 6px;
+}
+
 .modal-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-glass);

@@ -3,6 +3,7 @@ import { PlayerError } from '../core/errors.js';
 import { readAll } from '../lib/util.js';
 import { fromTimeRanges, calculateEvictionRanges } from '../lib/buffer.js';
 import { AdaptiveChunkManager } from '../lib/network.js';
+import { probeTsAudioCodec } from './ts-probe.js';
 // Import mux.js mp4 transmuxer
 // @ts-expect-error mux.js doesn't bundle ts types
 import muxjs from 'mux.js';
@@ -38,6 +39,8 @@ export class TsEngine implements PlaybackEngine {
   private isPruning = false;
   private pruneTimer: any = null;
   private initSegmentAppended = false;
+  private hasProbedAudio = false;
+  private audioWarned = false;
 
   private estimatedDuration = 0;
   private estimatedBitrate = 0; // bytes per second
@@ -169,10 +172,24 @@ export class TsEngine implements PlaybackEngine {
     });
 
     this.transmuxer.on('log', (event: any) => {
-      if (event?.message?.includes('unsupported')) {
-        this.host.warn(event.message);
+      const msg = typeof event === 'string' ? event : event?.message || '';
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes('unsupported') ||
+        lower.includes('dropping audio') ||
+        lower.includes('ac3') ||
+        lower.includes('mp2')
+      ) {
+        this.warnUnsupportedAudio();
       }
     });
+  }
+
+  private warnUnsupportedAudio(codec?: string): void {
+    if (this.audioWarned || this.isDestroyed) return;
+    this.audioWarned = true;
+    const desc = codec ? ` (${codec})` : ' (MP2/AC3)';
+    this.host.warn(`Audio format${desc} not natively supported in browser MSE; playing video only.`);
   }
 
   private queueBuffer(data: Uint8Array): void {
@@ -268,6 +285,17 @@ export class TsEngine implements PlaybackEngine {
         }
 
         if (chunk.length === 0) break;
+
+        // Inspect PMT on first chunk for unsupported audio codecs (e.g. MP2, AC-3)
+        if (!this.hasProbedAudio && chunk.length >= 188) {
+          this.hasProbedAudio = true;
+          try {
+            const probe = probeTsAudioCodec(chunk);
+            if (probe && probe.hasAudio && !probe.supported) {
+              this.warnUnsupportedAudio(probe.codec);
+            }
+          } catch {}
+        }
 
         // Push TS packet chunk to mux.js
         this.transmuxer.push(chunk);
