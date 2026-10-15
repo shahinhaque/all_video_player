@@ -16,6 +16,8 @@ const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const BUDGET = { core: 150 * 1024, content: 5 * 1024 };
 
 const HOSTS = [
+  'https://*/*',
+  'http://*/*',
   'https://mega.nz/*',
   'https://*.mega.nz/*',
   'https://*.mega.co.nz/*',

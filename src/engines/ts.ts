@@ -26,7 +26,7 @@ export class TsEngine implements PlaybackEngine {
   private isDestroyed = false;
 
   private currentByteOffset = 0;
-  private chunkSize = 2 * 1024 * 1024; // 2MB
+  private chunkSize = 11155 * 188; // 2,097,140 bytes (~2MB, exactly 11,155 MPEG-TS packets)
   private bufferQueue: Uint8Array[] = [];
   private isAppending = false;
   private initSegmentAppended = false;
@@ -58,14 +58,21 @@ export class TsEngine implements PlaybackEngine {
       this.abortCtrl.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     });
 
-    // Codec string for standard H.264 High Profile + AAC
-    const mime = 'video/mp4; codecs="avc1.640028, mp4a.40.2"';
-    try {
-      this.sourceBuffer = this.mediaSource.addSourceBuffer(mime);
-    } catch {
-      // Fallback to Main profile
-      this.sourceBuffer = this.mediaSource.addSourceBuffer('video/mp4; codecs="avc1.4d401f, mp4a.40.2"');
+    const mimeCandidates = [
+      'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+      'video/mp4; codecs="avc1.4d401f, mp4a.40.2"',
+      'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+      'video/mp4; codecs="avc1.42E01E"',
+      'video/mp4',
+    ];
+    let selectedMime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+    for (const candidate of mimeCandidates) {
+      if (typeof MediaSource.isTypeSupported === 'function' && MediaSource.isTypeSupported(candidate)) {
+        selectedMime = candidate;
+        break;
+      }
     }
+    this.sourceBuffer = this.mediaSource.addSourceBuffer(selectedMime);
 
     this.sourceBuffer.addEventListener('updateend', () => {
       this.isAppending = false;

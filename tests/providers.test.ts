@@ -51,6 +51,22 @@ describe('Provider URL Matchers & Parsers', () => {
       isFolder: true,
       subFileId: undefined,
     });
+
+    const folderSubFileUrl = new URL('https://mega.nz/folder/folderId123#folderKeyABC/file/subFile456');
+    expect(mega.canHandle(folderSubFileUrl)).toBe(true);
+    expect(mega.parseUrl(folderSubFileUrl)).toEqual({
+      id: 'folderId123',
+      key: 'folderKeyABC',
+      isFolder: true,
+      subFileId: 'subFile456',
+    });
+
+    const dirtyKeyUrl = new URL('https://mega.nz/file/xyz123#cleanKey999?param=1&foo=bar');
+    expect(mega.parseUrl(dirtyKeyUrl)).toEqual({
+      id: 'xyz123',
+      key: 'cleanKey999',
+      isFolder: false,
+    });
   });
 
   it('correctly identifies and resolves direct video URLs', async () => {

@@ -147,18 +147,19 @@ export class MegaProvider implements SourceProvider {
     // Format 1: /file/{id}#{key}
     const fileMatch = /\/file\/([a-zA-Z0-9_-]+)/.exec(path);
     if (fileMatch && hash) {
-      return { id: fileMatch[1], key: hash, isFolder: false };
+      const cleanKey = hash.split('/')[0].split('?')[0].split('&')[0];
+      return { id: fileMatch[1], key: cleanKey, isFolder: false };
     }
 
     // Format 2: /folder/{id}#{key} or /folder/{id}#{key}/file/{subFileId}
     const folderMatch = /\/folder\/([a-zA-Z0-9_-]+)/.exec(path);
     if (folderMatch && hash) {
       const subMatch = /\/file\/([a-zA-Z0-9_-]+)/.exec(path) || /\/file\/([a-zA-Z0-9_-]+)/.exec(hash);
-      const cleanKey = hash.split('/')[0];
+      const cleanKey = hash.split('/')[0].split('?')[0].split('&')[0];
       return {
         id: folderMatch[1],
         key: cleanKey,
-        isFolder: !subMatch,
+        isFolder: true,
         subFileId: subMatch ? subMatch[1] : undefined,
       };
     }
@@ -167,10 +168,12 @@ export class MegaProvider implements SourceProvider {
     if (hash.startsWith('!')) {
       const parts = hash.split('!');
       if (parts[1] === 'F' && parts[2] && parts[3]) {
-        return { id: parts[2], key: parts[3], isFolder: true };
+        const cleanKey = parts[3].split('?')[0].split('&')[0];
+        return { id: parts[2], key: cleanKey, isFolder: true };
       }
       if (parts[1] && parts[2]) {
-        return { id: parts[1], key: parts[2], isFolder: false };
+        const cleanKey = parts[2].split('?')[0].split('&')[0];
+        return { id: parts[1], key: cleanKey, isFolder: false };
       }
     }
 
@@ -184,7 +187,7 @@ export class MegaProvider implements SourceProvider {
     }
 
     if (parsed.isFolder) {
-      return this.resolveFolder(parsed.id, parsed.key, url.href);
+      return this.resolveFolder(parsed.id, parsed.key, url.href, parsed.subFileId);
     }
 
     // Resolve single file via MEGA API
@@ -243,7 +246,7 @@ export class MegaProvider implements SourceProvider {
     };
   }
 
-  private async resolveFolder(folderId: string, folderKey: string, sourceUrl: string): Promise<Playlist> {
+  private async resolveFolder(folderId: string, folderKey: string, sourceUrl: string, subFileId?: string): Promise<Playlist> {
     const folderKeyBytes = base64UrlToBytes(folderKey);
     const folderWords = bytesToWords(folderKeyBytes);
 
@@ -313,10 +316,16 @@ export class MegaProvider implements SourceProvider {
       throw new PlayerError('notfound', 'No playable video files found in this MEGA folder.');
     }
 
+    let startIndex = 0;
+    if (subFileId) {
+      const idx = items.findIndex((it) => it.id === subFileId);
+      if (idx !== -1) startIndex = idx;
+    }
+
     return {
       title: 'MEGA Folder',
       items,
-      startIndex: 0,
+      startIndex,
       sourceUrl,
     };
   }
