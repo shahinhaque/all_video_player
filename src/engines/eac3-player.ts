@@ -18,9 +18,7 @@ export class Eac3AudioPlayer {
 
   private queue: DecodedAudioChunk[] = [];
   private activeSources: { source: AudioBufferSourceNode; startTime: number; endTime: number }[] = [];
-  private scheduledUntilVideoTime = 0;
-  private baseVideoTime = 0;
-  private baseAudioCtxTime = 0;
+
 
   private video: HTMLVideoElement;
 
@@ -94,45 +92,31 @@ export class Eac3AudioPlayer {
     if (this.video.paused || this.video.seeking) return;
 
     const currentVTime = this.video.currentTime;
-    const LOOKAHEAD_SEC = 2.5;
+    const LOOKAHEAD_SEC = 3.0;
+    const rate = this.video.playbackRate || 1.0;
 
-    // Prune expired queued chunks that are well behind currentTime
-    while (this.queue.length > 0 && this.queue[0].timestamp + this.queue[0].duration < currentVTime - 1.0) {
+    // Prune expired queued chunks that are behind currentTime
+    while (this.queue.length > 0 && this.queue[0].timestamp + this.queue[0].duration < currentVTime - 0.5) {
       this.queue.shift();
     }
 
-    // Initialize or re-sync reference times
-    if (this.activeSources.length === 0) {
-      this.baseVideoTime = currentVTime;
-      this.baseAudioCtxTime = this.audioCtx.currentTime + 0.05; // 50ms scheduling lead
-      this.scheduledUntilVideoTime = currentVTime;
-    }
-
-    const rate = this.video.playbackRate || 1.0;
-
     for (const chunk of this.queue) {
-      if (chunk.timestamp < this.scheduledUntilVideoTime - 0.02) continue;
+      if ((chunk as any)._scheduled) continue;
+      if (chunk.timestamp < currentVTime - 0.08) continue;
       if (chunk.timestamp > currentVTime + LOOKAHEAD_SEC) break;
 
-      const deltaV = chunk.timestamp - this.baseVideoTime;
-      const targetCtxTime = this.baseAudioCtxTime + deltaV / rate;
-
-      if (targetCtxTime < this.audioCtx.currentTime - 0.1) {
-        // Chunk is in the past, skip
-        continue;
-      }
+      const delaySec = (chunk.timestamp - currentVTime) / rate;
+      const startTime = this.audioCtx.currentTime + Math.max(0.01, delaySec);
 
       const source = this.audioCtx.createBufferSource();
       source.buffer = chunk.buffer;
       source.playbackRate.value = rate;
       source.connect(this.gainNode);
-
-      const startTime = Math.max(targetCtxTime, this.audioCtx.currentTime);
       source.start(startTime);
 
+      (chunk as any)._scheduled = true;
       const endTime = startTime + chunk.duration / rate;
       this.activeSources.push({ source, startTime, endTime });
-      this.scheduledUntilVideoTime = Math.max(this.scheduledUntilVideoTime, chunk.timestamp + chunk.duration);
     }
 
     // Clean up finished sources
@@ -184,7 +168,6 @@ export class Eac3AudioPlayer {
 
   resetScheduling(): void {
     this.stopActiveSources();
-    this.scheduledUntilVideoTime = 0;
   }
 
   clearQueue(): void {

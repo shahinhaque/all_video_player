@@ -230,11 +230,14 @@ class PlayerController {
             this.showAlert(`Discovered ${tracks.length} audio tracks (Click ♫ icon to change).`);
           }
         },
-        onSubtitleTracksDiscovered: (tracks: SubtitleTrackInfo[]) => {
+        onSubtitleTracksDiscovered: (tracks: SubtitleTrackInfo[], selectedId?: string) => {
           for (const trk of tracks) {
             if (!this.currentSubtitleTracks.some((s) => s.id === trk.id)) {
               this.currentSubtitleTracks.push(trk);
             }
+          }
+          if (selectedId && !this.activeSubtitleTrackId) {
+            this.activeSubtitleTrackId = selectedId;
           }
           this.renderSubtitleTracksMenu();
         },

@@ -116,8 +116,8 @@ export class NativeEngine implements PlaybackEngine {
       }
 
       if (this.subtitleTracks.length > 0) {
-        this.host.onSubtitleTracksDiscovered?.(this.subtitleTracks);
-        const defSub = this.subtitleTracks.find((s) => s.isDefault);
+        const defSub = this.subtitleTracks.find((s) => s.isDefault) || this.subtitleTracks[0];
+        this.host.onSubtitleTracksDiscovered?.(this.subtitleTracks, defSub?.id);
         if (defSub) {
           this.setSubtitleTrack(defSub.id);
         }
@@ -197,13 +197,15 @@ export class NativeEngine implements PlaybackEngine {
     if (this.isDemuxingLoopRunning || !this.mkvDemuxer) return;
     this.isDemuxingLoopRunning = true;
 
+    let prebufferCount = 0;
     while (!this.isDestroyed && !this.abortCtrl.signal.aborted) {
-      if (this.video.paused && !this.video.seeking) {
+      if (this.video.paused && !this.video.seeking && prebufferCount >= 6) {
         await new Promise((r) => setTimeout(r, 200));
         continue;
       }
 
       const hasMore = await this.mkvDemuxer.readNextChunk(512 * 1024);
+      prebufferCount++;
       if (!hasMore) {
         await new Promise((r) => setTimeout(r, 300));
       }

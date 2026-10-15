@@ -71,7 +71,7 @@ export interface EngineHost {
   warn(message: string): void;
   fail(error: unknown): void;
   onAudioTracksDiscovered?(tracks: AudioTrackInfo[], selectedId?: string): void;
-  onSubtitleTracksDiscovered?(tracks: SubtitleTrackInfo[]): void;
+  onSubtitleTracksDiscovered?(tracks: SubtitleTrackInfo[], selectedId?: string): void;
 }
 
 export interface PlaybackEngine {
