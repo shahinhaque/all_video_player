@@ -447,32 +447,51 @@ class PlayerController {
   }
 
   private playNext(): void {
-    if (this.playlistManager?.hasNext()) {
+    if (!this.playlistManager) return;
+
+    if (this.playlistManager.count <= 1) {
+      this.showAlert('Only 1 video in current playlist.');
+      return;
+    }
+
+    if (this.playlistManager.hasNext()) {
       const nextItem = this.playlistManager.next();
-      this.playItem(nextItem);
+      if (nextItem) this.playItem(nextItem);
     } else {
-      // Seek forward 10s if no next track
-      const dur = this.video.duration;
-      if (dur && Number.isFinite(dur)) {
-        this.video.currentTime = Math.min(dur, this.video.currentTime + 10);
-      } else {
-        this.video.currentTime += 10;
+      // Reached the end of playlist -> loop back to first track
+      const firstItem = this.playlistManager.setIndex(0);
+      if (firstItem) {
+        this.showAlert('Reached end of playlist. Restarting from first video.');
+        this.playItem(firstItem);
       }
     }
   }
 
   private playPrevious(): void {
-    // If playback is more than 3 seconds in, restart current track
+    if (!this.playlistManager) return;
+
+    if (this.playlistManager.count <= 1) {
+      this.video.currentTime = 0;
+      this.showAlert('Single video — restarted from beginning.');
+      return;
+    }
+
     if (this.video.currentTime > 3) {
+      // If playback is more than 3 seconds in, restart current track
       this.video.currentTime = 0;
       return;
     }
-    if (this.playlistManager?.hasPrev()) {
+
+    if (this.playlistManager.hasPrev()) {
       const prevItem = this.playlistManager.prev();
-      this.playItem(prevItem);
+      if (prevItem) this.playItem(prevItem);
     } else {
-      // Seek backward 10s or jump to start
-      this.video.currentTime = Math.max(0, this.video.currentTime - 10);
+      // At the start -> loop to last video in playlist
+      const lastItem = this.playlistManager.setIndex(this.playlistManager.count - 1);
+      if (lastItem) {
+        this.showAlert('Looping to last video in playlist.');
+        this.playItem(lastItem);
+      }
     }
   }
 
@@ -648,20 +667,17 @@ class PlayerController {
     items.forEach((el, idx) => {
       el.classList.toggle('active', idx === curIdx);
     });
-    // Keep Next/Previous buttons active for seeking even if only 1 item exists
+    // Next/Previous buttons are for track navigation
+    const count = this.playlistManager?.count || 0;
     this.btnPrev.disabled = false;
     this.btnNext.disabled = false;
 
-    if (this.playlistManager?.hasPrev()) {
-      this.btnPrev.title = 'Previous Video (Shift+P)';
+    if (count <= 1) {
+      this.btnPrev.title = 'Previous Video (Only 1 in playlist)';
+      this.btnNext.title = 'Next Video (Only 1 in playlist)';
     } else {
-      this.btnPrev.title = 'Restart / Seek -10s (Shift+P)';
-    }
-
-    if (this.playlistManager?.hasNext()) {
-      this.btnNext.title = 'Next Video (Shift+N)';
-    } else {
-      this.btnNext.title = 'Seek Forward +10s (Shift+N)';
+      this.btnPrev.title = this.playlistManager?.hasPrev() ? 'Previous Video (Shift+P)' : 'Previous Video (Loop to last)';
+      this.btnNext.title = this.playlistManager?.hasNext() ? 'Next Video (Shift+N)' : 'Next Video (Loop to first)';
     }
   }
 

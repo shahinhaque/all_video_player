@@ -9,10 +9,21 @@ export class PlaylistManager {
   private resumeEnabled: boolean = true;
 
   constructor(playlist: Playlist) {
+    const selectedItem =
+      playlist.startIndex !== undefined && playlist.items[playlist.startIndex]
+        ? playlist.items[playlist.startIndex]
+        : undefined;
+
     // Natural alphanumeric sort so "Episode 2" comes before "Episode 10"
     playlist.items.sort((a, b) => naturalCompare(a.name, b.name));
     this.playlist = playlist;
-    this.activeIndex = Math.max(0, Math.min(playlist.startIndex || 0, playlist.items.length - 1));
+
+    if (selectedItem) {
+      const newIdx = playlist.items.findIndex((it) => it.id === selectedItem.id);
+      this.activeIndex = newIdx !== -1 ? newIdx : 0;
+    } else {
+      this.activeIndex = Math.max(0, Math.min(playlist.startIndex || 0, playlist.items.length - 1));
+    }
   }
 
   get items(): MediaItem[] {
