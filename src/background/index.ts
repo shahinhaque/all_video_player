@@ -95,6 +95,40 @@ async function setupDeclarativeRules() {
         initiatorDomains: [extId],
       },
     },
+    {
+      id: 1006,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'X-Frame-Options', operation: 'remove' },
+          { header: 'Content-Security-Policy', operation: 'remove' },
+        ],
+      },
+      condition: {
+        urlFilter: '*://*.youtube.com/embed/*',
+        resourceTypes: ['sub_frame'],
+        initiatorDomains: [extId],
+      },
+    },
+    {
+      id: 1007,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'X-Frame-Options', operation: 'remove' },
+          { header: 'Content-Security-Policy', operation: 'remove' },
+        ],
+      },
+      condition: {
+        urlFilter: '*://*.youtube-nocookie.com/embed/*',
+        resourceTypes: ['sub_frame'],
+        initiatorDomains: [extId],
+      },
+    },
   ];
 
   try {

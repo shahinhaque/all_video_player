@@ -321,8 +321,9 @@ class PlayerController {
     this.video.pause();
     this.video.hidden = true;
     this.drivePreviewFrame.hidden = false;
-    const videoId = item.ref?.videoId;
-    const embedUrl = item.ref?.embedUrl || `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1`;
+    const embedUrl =
+      item.ref?.embedUrl ||
+      `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&playsinline=1&origin=${encodeURIComponent(location.origin)}`;
     this.drivePreviewFrame.src = embedUrl;
     this.codecPill.hidden = false;
     this.codecPill.textContent = 'YOUTUBE';

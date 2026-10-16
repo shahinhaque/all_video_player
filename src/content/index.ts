@@ -660,7 +660,11 @@ function injectInPageContextMenu(): void {
   }
 }
 
-// --- Seamless Hybrid In-Page Modal (First-Party Cookies & Zero Cross-Origin Redirects) ---
+
+// --- Seamless Non-Blocking Floating Picture-in-Picture Player ---
+let activeShadowRoot: ShadowRoot | null = null;
+let activeTargetUrl: string = '';
+
 function extractDriveFileId(url: string): string | null {
   const match = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || url.match(/id=([a-zA-Z0-9_-]+)/);
   return match ? match[1] : null;
@@ -676,11 +680,11 @@ function extractYouTubeVideoId(url: string): string | null {
 function removeInPageModal(): void {
   const existing = document.getElementById('cloudplay-modal-host');
   if (existing) existing.remove();
+  activeShadowRoot = null;
+  activeTargetUrl = '';
 }
 
 function showInPageModal(targetUrl: string): void {
-  removeInPageModal();
-
   const isGDrive = location.hostname.includes('drive.google.com') || targetUrl.includes('drive.google.com');
   const isYouTube = location.hostname.includes('youtube.com') || targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
 
@@ -690,83 +694,135 @@ function showInPageModal(targetUrl: string): void {
   if (isGDrive) {
     const fileId = extractDriveFileId(targetUrl);
     embedUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : targetUrl;
-    title = 'Google Drive Stream';
+    title = 'Google Drive Video';
   } else if (isYouTube) {
     const ytId = extractYouTubeVideoId(targetUrl);
-    embedUrl = ytId ? `https://www.youtube.com/embed/${ytId}?autoplay=1&enablejsapi=1` : targetUrl;
+    embedUrl = ytId
+      ? `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&enablejsapi=1&playsinline=1&origin=${encodeURIComponent(location.origin)}`
+      : targetUrl;
     const pageTitle = document.title ? document.title.replace(/\s*-\s*YouTube.*$/, '').trim() : '';
     title = pageTitle ? `YouTube • ${pageTitle}` : 'YouTube Video';
   }
 
+  activeTargetUrl = targetUrl;
+
+  // If floating player is ALREADY OPEN, switch video smoothly in-place without resetting browse state
+  if (activeShadowRoot) {
+    const existingIframe = activeShadowRoot.querySelector('iframe');
+    const existingTitle = activeShadowRoot.querySelector('.title') as HTMLElement;
+    if (existingIframe && existingTitle) {
+      existingIframe.src = embedUrl;
+      existingTitle.textContent = title;
+      existingTitle.title = title;
+      return;
+    }
+  }
+
+  removeInPageModal();
+
   const host = document.createElement('div');
   host.id = 'cloudplay-modal-host';
+  host.style.cssText = 'position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;';
   const shadow = host.attachShadow({ mode: 'open' });
+  activeShadowRoot = shadow;
 
   const style = document.createElement('style');
   style.textContent = `
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .backdrop {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(8px);
-      z-index: 2147483647;
-      display: flex; align-items: center; justify-content: center;
-      animation: cpFadeIn 0.18s ease-out forwards;
-    }
-    @keyframes cpFadeIn { from { opacity: 0; } to { opacity: 1; } }
-    .modal {
-      width: 880px; max-width: 94vw;
-      height: 540px; max-height: 88vh;
+    .floating-player {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 480px;
+      height: 300px;
+      min-width: 320px;
+      min-height: 200px;
+      max-width: 96vw;
+      max-height: 96vh;
       background: #0f172a;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 14px;
-      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(99, 102, 241, 0.3);
-      display: flex; flex-direction: column; overflow: hidden;
-      animation: cpPopIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(99, 102, 241, 0.35);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      pointer-events: auto;
+      resize: both;
+      animation: cpPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
       transition: width 0.2s ease, height 0.2s ease;
     }
-    @keyframes cpPopIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-    .modal.theater {
-      width: 98vw !important; height: 96vh !important;
-      max-width: 98vw !important; max-height: 96vh !important;
-      border-radius: 8px; left: auto !important; top: auto !important;
-      position: relative !important; margin: auto !important;
+    @keyframes cpPopIn { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .floating-player.expanded {
+      width: 820px !important;
+      height: 510px !important;
+    }
+    .floating-player.theater {
+      width: 96vw !important;
+      height: 94vh !important;
+      bottom: 12px !important;
+      right: 12px !important;
+      left: auto !important;
+      top: auto !important;
     }
     .header {
-      height: 44px; background: #1e293b;
+      height: 38px;
+      background: #1e293b;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 0 14px; user-select: none; cursor: grab;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      user-select: none;
+      cursor: grab;
+      flex-shrink: 0;
     }
     .header:active { cursor: grabbing; }
     .brand-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .badge {
-      background: #6366f1; color: #fff; font-size: 11px; font-weight: 700;
-      padding: 2px 7px; border-radius: 4px; letter-spacing: 0.5px;
+      background: #6366f1;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
     }
     .title {
-      color: #f8fafc; font-size: 13px; font-weight: 600;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      max-width: 480px;
+      color: #f8fafc;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
     }
-    .actions { display: flex; align-items: center; gap: 6px; }
+    .actions { display: flex; align-items: center; gap: 4px; }
     .btn {
-      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
-      color: #cbd5e1; border-radius: 6px; height: 28px; padding: 0 10px;
-      font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 5px;
-      transition: all 0.15s ease;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #cbd5e1;
+      border-radius: 5px;
+      height: 24px;
+      padding: 0 8px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.12s ease;
     }
-    .btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+    .btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; border-color: rgba(255, 255, 255, 0.25); }
     .btn-close:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
     .video-wrap { flex: 1; position: relative; background: #000; width: 100%; height: 100%; overflow: hidden; }
     iframe { width: 100%; height: 100%; border: none; display: block; }
   `;
 
-  const backdrop = document.createElement('div');
-  backdrop.className = 'backdrop';
+  const player = document.createElement('div');
+  player.className = 'floating-player';
 
-  const modal = document.createElement('div');
-  modal.className = 'modal';
+  const hasNativeVideo = Boolean(document.querySelector('video'));
+  const pipBtnHtml = hasNativeVideo ? `<button class="btn btn-pip" title="Native Picture-in-Picture">🗔 PiP</button>` : '';
 
   const header = document.createElement('div');
   header.className = 'header';
@@ -776,9 +832,10 @@ function showInPageModal(targetUrl: string): void {
       <span class="title" title="${title}">${title}</span>
     </div>
     <div class="actions">
-      <button class="btn btn-theater" title="Toggle Theater Mode">⛶ Theater</button>
-      <button class="btn btn-popout" title="Open in Full Tab / Standalone Window">↗ Full Tab</button>
-      <button class="btn btn-close" title="Close (Esc)">✕</button>
+      ${pipBtnHtml}
+      <button class="btn btn-expand" title="Expand / Minimize Player">🗖 Expand</button>
+      <button class="btn btn-popout" title="Open in Full Tab">↗ Tab</button>
+      <button class="btn btn-close" title="Close">✕</button>
     </div>
   `;
 
@@ -786,19 +843,19 @@ function showInPageModal(targetUrl: string): void {
   videoWrap.className = 'video-wrap';
   const iframe = document.createElement('iframe');
   iframe.src = embedUrl;
+  iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
   iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
   iframe.setAttribute('allowfullscreen', 'true');
   videoWrap.appendChild(iframe);
 
-  modal.appendChild(header);
-  modal.appendChild(videoWrap);
-  backdrop.appendChild(modal);
+  player.appendChild(header);
+  player.appendChild(videoWrap);
 
   shadow.appendChild(style);
-  shadow.appendChild(backdrop);
+  shadow.appendChild(player);
   document.body.appendChild(host);
 
-  // Dragging support
+  // Smooth dragging support
   let isDragging = false;
   let startX = 0;
   let startY = 0;
@@ -807,27 +864,28 @@ function showInPageModal(targetUrl: string): void {
 
   header.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
-    if (modal.classList.contains('theater')) return;
+    if (player.classList.contains('theater')) return;
 
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
-    const rect = modal.getBoundingClientRect();
+    const rect = player.getBoundingClientRect();
     initialLeft = rect.left;
     initialTop = rect.top;
 
-    modal.style.position = 'fixed';
-    modal.style.left = `${initialLeft}px`;
-    modal.style.top = `${initialTop}px`;
-    modal.style.margin = '0';
-    modal.style.transform = 'none';
+    player.style.position = 'fixed';
+    player.style.left = `${initialLeft}px`;
+    player.style.top = `${initialTop}px`;
+    player.style.bottom = 'auto';
+    player.style.right = 'auto';
+    player.style.margin = '0';
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!isDragging) return;
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
-      modal.style.left = `${Math.max(10, Math.min(window.innerWidth - 120, initialLeft + dx))}px`;
-      modal.style.top = `${Math.max(10, Math.min(window.innerHeight - 50, initialTop + dy))}px`;
+      player.style.left = `${Math.max(10, Math.min(window.innerWidth - 120, initialLeft + dx))}px`;
+      player.style.top = `${Math.max(10, Math.min(window.innerHeight - 50, initialTop + dy))}px`;
     };
 
     const onMouseUp = () => {
@@ -841,41 +899,35 @@ function showInPageModal(targetUrl: string): void {
   });
 
   // Action listeners
-  const theaterBtn = header.querySelector('.btn-theater') as HTMLButtonElement;
-  theaterBtn.addEventListener('click', () => {
-    const isTheater = modal.classList.toggle('theater');
-    theaterBtn.innerHTML = isTheater ? '🗗 Restore' : '⛶ Theater';
-    if (isTheater) {
-      modal.style.left = '';
-      modal.style.top = '';
-      modal.style.margin = '';
+  const expandBtn = header.querySelector('.btn-expand') as HTMLButtonElement;
+  expandBtn.addEventListener('click', () => {
+    const isExpanded = player.classList.toggle('expanded');
+    expandBtn.innerHTML = isExpanded ? '🗗 Mini' : '🗖 Expand';
+  });
+
+  const pipBtn = header.querySelector('.btn-pip') as HTMLButtonElement | null;
+  pipBtn?.addEventListener('click', () => {
+    const v = document.querySelector('video') as HTMLVideoElement | null;
+    if (v && document.pictureInPictureEnabled) {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture().catch(() => {});
+      } else {
+        v.requestPictureInPicture().catch(() => {});
+      }
     }
   });
 
   const popoutBtn = header.querySelector('.btn-popout') as HTMLButtonElement;
   popoutBtn.addEventListener('click', () => {
+    const curUrl = activeTargetUrl || targetUrl;
     removeInPageModal();
-    ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url: targetUrl });
+    ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url: curUrl });
   });
 
   const closeBtn = header.querySelector('.btn-close') as HTMLButtonElement;
   closeBtn.addEventListener('click', () => {
     removeInPageModal();
   });
-
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) {
-      removeInPageModal();
-    }
-  });
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      removeInPageModal();
-      window.removeEventListener('keydown', onKeyDown);
-    }
-  };
-  window.addEventListener('keydown', onKeyDown);
 }
 
 // Receive messages from background script for in-page hybrid playback
