@@ -1,4 +1,4 @@
-import { ext, getRawBrowser } from '../lib/browser.js';
+import { ext, getRawBrowser, getRawChrome } from '../lib/browser.js';
 
 // Setup declarativeNetRequest rules to remove restrictive CORS/CORP and Content-Disposition headers for Google Drive & cloud streams
 async function setupDeclarativeRules() {
@@ -151,7 +151,7 @@ function setupContextMenu() {
       const lastErr = rawChrome?.runtime?.lastError || rawBrowser?.runtime?.lastError;
       if (lastErr && api.update) {
         api.update('cloudplay-open-link', { title }, () => {
-          const _ = rawChrome?.runtime?.lastError;
+          void rawChrome?.runtime?.lastError;
         });
       }
     });
