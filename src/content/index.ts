@@ -369,7 +369,6 @@ if (
 // --- Ultra-Fast Event-Driven Context Menu Hook (Zero polling, Zero DOM observers) ---
 let lastContextTarget: HTMLElement | null = null;
 let lastTargetUrl: string | null = null;
-let lastContextPos = { x: 0, y: 0 };
 
 function resolveTargetUrl(el: HTMLElement | null): string {
   if (!el) return location.href;
@@ -421,7 +420,6 @@ function resolveTargetUrl(el: HTMLElement | null): string {
 
 document.addEventListener('contextmenu', (e) => {
   lastContextTarget = e.target as HTMLElement;
-  lastContextPos = { x: e.clientX, y: e.clientY };
   lastTargetUrl = resolveTargetUrl(lastContextTarget);
   if (lastTargetUrl) {
     try {
@@ -432,61 +430,47 @@ document.addEventListener('contextmenu', (e) => {
   setTimeout(injectInPageContextMenu, 200);
 });
 
-function removeGoogleDrivePill(): void {
-  document.getElementById('cloudplay-gdrive-pill')?.remove();
-}
-
-function showGoogleDrivePill(x: number, y: number, targetUrl: string): void {
-  removeGoogleDrivePill();
-  const pill = document.createElement('div');
-  pill.id = 'cloudplay-gdrive-pill';
-  pill.style.cssText = `
-    position: fixed;
-    top: ${Math.max(12, Math.min(window.innerHeight - 50, y - 48))}px;
-    left: ${Math.max(12, Math.min(window.innerWidth - 210, x + 8))}px;
-    z-index: 2147483647;
-    background: #6366f1;
-    color: #ffffff;
-    font-family: system-ui, -apple-system, sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 7px 14px;
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    user-select: none;
-    transition: transform 0.15s ease, background 0.15s ease;
-  `;
-  pill.innerHTML = `<span style="font-size: 13px;">▶</span> Play in CloudPlay`;
-  pill.addEventListener('mouseenter', () => { pill.style.background = '#4f46e5'; });
-  pill.addEventListener('mouseleave', () => { pill.style.background = '#6366f1'; });
-  pill.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    removeGoogleDrivePill();
-    ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url: targetUrl });
-  });
-
-  document.body.appendChild(pill);
-
-  const dismiss = () => {
-    removeGoogleDrivePill();
-    document.removeEventListener('click', dismiss);
-  };
-  setTimeout(() => document.addEventListener('click', dismiss), 150);
-}
-
 function injectInPageContextMenu(): void {
-  // 1. Google Drive custom context action:
-  // We NEVER inject into Google Drive's Closure div[role="menu"] because modifying Closure's component
-  // hierarchy causes unhandled TypeErrors that freeze Drive's right-click menu and browsing.
+  // 1. Google Drive custom context menu (seamlessly inside menu alongside Open With, Download, etc.)
   if (location.hostname.includes('drive.google.com')) {
-    const isFileTarget = lastTargetUrl && lastTargetUrl.includes('/file/d/');
-    if (isFileTarget) {
-      showGoogleDrivePill(lastContextPos.x, lastContextPos.y, lastTargetUrl!);
+    const gdriveMenu = document.querySelector('div[role="menu"]');
+    if (gdriveMenu && !gdriveMenu.querySelector('.cloudplay-context-item')) {
+      const item = document.createElement('div');
+      item.className = 'goog-menuitem cloudplay-context-item';
+      item.setAttribute('role', 'menuitem');
+      item.setAttribute('tabindex', '-1');
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 13px;
+        color: #202124;
+        font-family: Roboto, Arial, sans-serif;
+        font-weight: 500;
+        transition: background-color 0.1s ease;
+        user-select: none;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      `;
+      item.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; width:18px; text-align:center;">▶</span> <span>Play in CloudPlay</span>`;
+
+      // Stop pointer/mouse events from bubbling to Google Drive's Closure delegator so Closure doesn't throw on lookup
+      const stopEvents = ['mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'pointermove'];
+      stopEvents.forEach((evt) => {
+        item.addEventListener(evt, (e) => e.stopPropagation());
+      });
+
+      item.addEventListener('mouseenter', () => { item.style.backgroundColor = '#f1f3f4'; });
+      item.addEventListener('mouseleave', () => { item.style.backgroundColor = 'transparent'; });
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const url = lastTargetUrl || location.href;
+        ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+      });
+
+      gdriveMenu.insertBefore(item, gdriveMenu.children[1] || gdriveMenu.firstChild);
     }
   }
 
@@ -550,13 +534,18 @@ function injectInPageContextMenu(): void {
   }
 
   // 4. OneDrive custom context menu
-  const oneDriveMenu = document.querySelector('.ms-ContextualMenu');
+  const oneDriveMenu = document.querySelector('.ms-ContextualMenu-list, .ms-ContextualMenu');
   if (oneDriveMenu && !oneDriveMenu.querySelector('.cloudplay-context-item')) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'ms-ContextualMenu-link cloudplay-context-item';
-    item.setAttribute('role', 'menuitem');
-    item.style.cssText = `
+    const item = document.createElement('li');
+    item.className = 'ms-ContextualMenu-item cloudplay-context-item';
+    item.setAttribute('role', 'presentation');
+    item.style.cssText = `list-style: none; padding: 0; margin: 0;`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ms-ContextualMenu-link';
+    btn.setAttribute('role', 'menuitem');
+    btn.style.cssText = `
       display: flex;
       align-items: center;
       gap: 10px;
@@ -567,17 +556,26 @@ function injectInPageContextMenu(): void {
       background: transparent;
       border: none;
       text-align: left;
+      color: inherit;
     `;
-    item.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
-    item.addEventListener('mouseenter', () => { item.style.background = 'rgba(0,0,0,0.05)'; });
-    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
-    item.addEventListener('click', (e) => {
+    btn.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
+
+    const stopEvents = ['mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'pointermove'];
+    stopEvents.forEach((evt) => {
+      item.addEventListener(evt, (e) => e.stopPropagation());
+    });
+
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(0,0,0,0.05)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       const url = lastTargetUrl || location.href;
       ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
     });
-    oneDriveMenu.prepend(item);
+
+    item.appendChild(btn);
+    oneDriveMenu.insertBefore(item, oneDriveMenu.firstChild);
   }
 }
 
