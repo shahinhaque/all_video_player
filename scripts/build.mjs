@@ -33,7 +33,6 @@ async function copyDir(src, dest) {
   await mkdir(dest, { recursive: true });
   const entries = await readdir(src, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name === '_locales') continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
@@ -59,12 +58,13 @@ function manifest(target) {
 
   const m = {
     manifest_version: 3,
-    name: 'CloudPlay – Cloud Video Player',
-    short_name: 'CloudPlay',
+    default_locale: 'en',
+    name: '__MSG_appName__',
+    short_name: '__MSG_appShortName__',
     version: pkg.version,
-    description: 'Stream TS, MP4, MKV, HLS & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.',
+    description: '__MSG_appDesc__',
     icons,
-    action: { default_popup: 'popup.html', default_icon: icons, default_title: 'CloudPlay' },
+    action: { default_popup: 'popup.html', default_icon: icons, default_title: '__MSG_actionTitle__' },
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions,
     host_permissions: HOSTS,
@@ -84,11 +84,6 @@ function manifest(target) {
 
 async function buildTarget(target) {
   const outdir = path.join(root, 'dist', target);
-  try {
-    await rm(outdir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-  } catch (err) {
-    // On Windows with OneDrive sync active, directory deletion may be locked; continue to overwrite
-  }
   await mkdir(outdir, { recursive: true });
 
   const common = {
@@ -138,6 +133,15 @@ async function buildTarget(target) {
 
   // Copy static files and manifest AFTER esbuild completes so assets are never cleared
   await copyDir(path.join(root, 'src', 'static'), outdir);
+
+  // Guarantee _locales/en/messages.json is always present
+  const localeDir = path.join(outdir, '_locales', 'en');
+  await mkdir(localeDir, { recursive: true });
+  await copyFile(
+    path.join(root, 'src', 'static', '_locales', 'en', 'messages.json'),
+    path.join(localeDir, 'messages.json')
+  );
+
   await writeFile(path.join(outdir, 'manifest.json'), JSON.stringify(manifest(target), null, 2));
 
   return report(target, outdir, metas);
