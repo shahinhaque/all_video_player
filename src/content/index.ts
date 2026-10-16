@@ -10,18 +10,6 @@ interface DetectedVideo {
 
 const VIDEO_EXTENSIONS = ['.ts', '.m2ts', '.mts', '.mp4', '.mkv', '.webm', '.mov', '.avi'];
 
-function isCloudVideoPage(): boolean {
-  const host = location.hostname.toLowerCase();
-  const href = location.href;
-  return (
-    host.includes('mega.nz') ||
-    host.includes('mega.io') ||
-    href.includes('drive.google.com') ||
-    href.includes('onedrive.live.com') ||
-    href.includes('1drv.ms')
-  );
-}
-
 function getMegaFolderInfo(): { folderId: string; folderKey: string } | null {
   const match = location.href.match(/folder\/([a-zA-Z0-9_-]+)#([a-zA-Z0-9_-]+)/);
   if (match) {
@@ -283,7 +271,7 @@ function toggleMegaVideoDrawer(videos: DetectedVideo[]): void {
 }
 
 function injectFloatingButton(): void {
-  if (!isCloudVideoPage()) return;
+  if (!location.hostname.includes('mega')) return;
   let btn = document.getElementById('cloudplay-floating-btn') as HTMLButtonElement;
 
   const isMega = location.hostname.includes('mega');
@@ -352,56 +340,18 @@ function injectFloatingButton(): void {
   }
 }
 
-// Observe URL and DOM changes on single-page applications with debouncing and loop protection
-let lastUrl = location.href;
-let mutationTimeout: number | null = null;
-let isUpdatingDom = false;
-
-const observer = new MutationObserver((mutations) => {
-  if (isUpdatingDom) return;
-
-  // Ignore mutations caused exclusively by our own injected elements
-  const isSelf = mutations.every((m) => {
-    const target = m.target as HTMLElement;
-    return target && (
-      target.id?.startsWith('cloudplay') ||
-      target.className?.includes?.('cloudplay')
-    );
-  });
-  if (isSelf) return;
-
-  if (mutationTimeout !== null) {
-    clearTimeout(mutationTimeout);
+// Only initialize MEGA helper buttons on MEGA domains without continuous DOM observers
+if (location.hostname.includes('mega')) {
+  window.addEventListener('popstate', () => setTimeout(injectFloatingButton, 500));
+  window.addEventListener('hashchange', () => setTimeout(injectFloatingButton, 500));
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(injectFloatingButton, 500));
+  } else {
+    setTimeout(injectFloatingButton, 500);
   }
-
-  mutationTimeout = window.setTimeout(() => {
-    mutationTimeout = null;
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-    }
-    try {
-      isUpdatingDom = true;
-      injectFloatingButton();
-    } finally {
-      isUpdatingDom = false;
-    }
-  }, 350);
-});
-
-observer.observe(document.body || document.documentElement, {
-  subtree: true,
-  childList: true,
-});
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(injectFloatingButton, 300);
-  });
-} else {
-  setTimeout(injectFloatingButton, 300);
 }
 
-// --- Custom Right-Click Context Menu Hook for Google Drive, MEGA, and OneDrive ---
+// --- Ultra-Fast Event-Driven Context Menu Hook (Zero polling, Zero DOM observers) ---
 let lastContextTarget: HTMLElement | null = null;
 let lastTargetUrl: string | null = null;
 
@@ -420,14 +370,14 @@ function resolveTargetUrl(el: HTMLElement | null): string {
 
   // 2. Google Drive
   if (location.hostname.includes('drive.google.com')) {
-    const item = el.closest('[data-id], [data-target="doc"]') as HTMLElement;
+    const item = el.closest('[data-id], [data-target="doc"], [data-target="file"], [role="row"], [role="gridcell"]') as HTMLElement;
     const fileId = item?.dataset.id || item?.getAttribute('data-id');
     if (fileId) {
       return `https://drive.google.com/file/d/${fileId}/view`;
     }
   }
 
-  // 3. OneDrive
+  // 3. OneDrive / SharePoint
   if (location.hostname.includes('live.com') || location.hostname.includes('sharepoint.com') || location.hostname.includes('1drv.ms')) {
     const link = el.closest('a[href]') as HTMLAnchorElement;
     if (link?.href && (link.href.includes('id=') || link.href.includes(':v:') || link.href.includes('onedrive'))) {
@@ -445,8 +395,13 @@ function resolveTargetUrl(el: HTMLElement | null): string {
 document.addEventListener('contextmenu', (e) => {
   lastContextTarget = e.target as HTMLElement;
   lastTargetUrl = resolveTargetUrl(lastContextTarget);
-  setTimeout(injectInPageContextMenu, 80);
-  setTimeout(injectInPageContextMenu, 250);
+  if (lastTargetUrl) {
+    try {
+      ext.runtime.sendMessage({ type: 'SET_CONTEXT_URL', url: lastTargetUrl });
+    } catch {}
+  }
+  setTimeout(injectInPageContextMenu, 50);
+  setTimeout(injectInPageContextMenu, 180);
 }, true);
 
 function injectInPageContextMenu(): void {

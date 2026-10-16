@@ -179,9 +179,12 @@ function setupFirefoxWebRequest() {
 
 setupFirefoxWebRequest();
 
+let lastRightClickedUrl: string | null = null;
+
 ext.contextMenus?.onClicked.addListener((info: any, tab: any) => {
   if (info.menuItemId === 'cloudplay-open-link') {
-    const targetUrl = info.linkUrl || info.srcUrl || info.pageUrl || tab?.url;
+    const targetUrl = lastRightClickedUrl || info.linkUrl || info.srcUrl || info.pageUrl || tab?.url;
+    lastRightClickedUrl = null;
     if (targetUrl) {
       const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(targetUrl)}`);
       ext.tabs.create({ url: playerUrl, index: (tab?.index ?? 0) + 1 });
@@ -195,6 +198,12 @@ const msgTarget = rawBrowser?.runtime?.onMessage ? rawBrowser : ext;
 
 msgTarget.runtime.onMessage?.addListener((message: any, sender: any, sendResponse: any) => {
   const isFirefox = (typeof __TARGET__ !== 'undefined' && __TARGET__ === 'firefox') || !!rawBrowser?.runtime;
+
+  if (message?.type === 'SET_CONTEXT_URL' && message?.url) {
+    lastRightClickedUrl = message.url;
+    sendResponse({ ok: true });
+    return isFirefox ? Promise.resolve({ ok: true }) : true;
+  }
 
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);
