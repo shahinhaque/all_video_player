@@ -13,7 +13,7 @@ const targets = args.has('--chrome') ? ['chrome'] : args.has('--firefox') ? ['fi
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 
 /** Size budgets (gzipped). Core = everything loaded eagerly by any entry point. */
-const BUDGET = { core: 150 * 1024, content: 5 * 1024 };
+const BUDGET = { core: 150 * 1024, content: 10 * 1024 };
 
 const HOSTS = [
   '<all_urls>',

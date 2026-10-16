@@ -193,20 +193,40 @@ setupFirefoxWebRequest();
 
 let lastRightClickedUrl: string | null = null;
 
+function openPlayerTab(url: string, tab?: any): void {
+  const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(url)}`);
+  const createOptions: any = {
+    url: playerUrl,
+    index: (tab?.index ?? 0) + 1,
+  };
+  if (tab?.windowId !== undefined) {
+    createOptions.windowId = tab.windowId;
+  }
+  ext.tabs.create(createOptions);
+}
+
 ext.contextMenus?.onClicked.addListener((info: any, tab: any) => {
   if (info.menuItemId === 'cloudplay-open-link') {
     const targetUrl = lastRightClickedUrl || info.linkUrl || info.srcUrl || info.pageUrl || tab?.url;
     lastRightClickedUrl = null;
     if (targetUrl) {
-      const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(targetUrl)}`);
-      const createOptions: any = {
-        url: playerUrl,
-        index: (tab?.index ?? 0) + 1,
-      };
-      if (tab?.windowId !== undefined) {
-        createOptions.windowId = tab.windowId;
+      const isDriveOrYT = tab?.url && (tab.url.includes('drive.google.com') || tab.url.includes('youtube.com'));
+      if (isDriveOrYT && tab?.id) {
+        try {
+          ext.tabs.sendMessage(tab.id, { type: 'PLAY_IN_PAGE', url: targetUrl }, (resp: any) => {
+            const rawChrome = getRawChrome();
+            const err = rawChrome?.runtime?.lastError;
+            if (err || !resp?.handled) {
+              openPlayerTab(targetUrl, tab);
+            }
+          });
+          return;
+        } catch {
+          openPlayerTab(targetUrl, tab);
+          return;
+        }
       }
-      ext.tabs.create(createOptions);
+      openPlayerTab(targetUrl, tab);
     }
   }
 });

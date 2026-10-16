@@ -331,6 +331,8 @@ function injectFloatingButton(): void {
       if (isMega) {
         const currentVids = detectMegaVideosOnPage();
         toggleMegaVideoDrawer(currentVids);
+      } else if (isGDrive || isYouTube) {
+        showInPageModal(location.href);
       } else {
         ext.runtime.sendMessage({
           type: 'OPEN_PLAYER',
@@ -480,7 +482,7 @@ function injectInPageContextMenu(): void {
           e.preventDefault();
           removeCompanionMenu();
           const url = lastTargetUrl || location.href;
-          ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+          showInPageModal(url);
         });
 
         document.body.appendChild(companion);
@@ -545,7 +547,7 @@ function injectInPageContextMenu(): void {
           const popup = document.querySelector('.ytp-popup.ytp-contextmenu') as HTMLElement;
           if (popup) popup.style.display = 'none';
           const url = lastTargetUrl || location.href;
-          ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+          showInPageModal(url);
         });
 
         document.body.appendChild(companion);
@@ -657,5 +659,233 @@ function injectInPageContextMenu(): void {
     }
   }
 }
+
+// --- Seamless Hybrid In-Page Modal (First-Party Cookies & Zero Cross-Origin Redirects) ---
+function extractDriveFileId(url: string): string | null {
+  const match = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || url.match(/id=([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+function extractYouTubeVideoId(url: string): string | null {
+  const match =
+    url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/) ||
+    url.match(/^[a-zA-Z0-9_-]{11}$/);
+  return match ? match[1] : null;
+}
+
+function removeInPageModal(): void {
+  const existing = document.getElementById('cloudplay-modal-host');
+  if (existing) existing.remove();
+}
+
+function showInPageModal(targetUrl: string): void {
+  removeInPageModal();
+
+  const isGDrive = location.hostname.includes('drive.google.com') || targetUrl.includes('drive.google.com');
+  const isYouTube = location.hostname.includes('youtube.com') || targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+
+  let embedUrl = targetUrl;
+  let title = 'CloudPlay Player';
+
+  if (isGDrive) {
+    const fileId = extractDriveFileId(targetUrl);
+    embedUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : targetUrl;
+    title = 'Google Drive Stream';
+  } else if (isYouTube) {
+    const ytId = extractYouTubeVideoId(targetUrl);
+    embedUrl = ytId ? `https://www.youtube.com/embed/${ytId}?autoplay=1&enablejsapi=1` : targetUrl;
+    const pageTitle = document.title ? document.title.replace(/\s*-\s*YouTube.*$/, '').trim() : '';
+    title = pageTitle ? `YouTube • ${pageTitle}` : 'YouTube Video';
+  }
+
+  const host = document.createElement('div');
+  host.id = 'cloudplay-modal-host';
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .backdrop {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      z-index: 2147483647;
+      display: flex; align-items: center; justify-content: center;
+      animation: cpFadeIn 0.18s ease-out forwards;
+    }
+    @keyframes cpFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
+      width: 880px; max-width: 94vw;
+      height: 540px; max-height: 88vh;
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 14px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(99, 102, 241, 0.3);
+      display: flex; flex-direction: column; overflow: hidden;
+      animation: cpPopIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      transition: width 0.2s ease, height 0.2s ease;
+    }
+    @keyframes cpPopIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .modal.theater {
+      width: 98vw !important; height: 96vh !important;
+      max-width: 98vw !important; max-height: 96vh !important;
+      border-radius: 8px; left: auto !important; top: auto !important;
+      position: relative !important; margin: auto !important;
+    }
+    .header {
+      height: 44px; background: #1e293b;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px; user-select: none; cursor: grab;
+    }
+    .header:active { cursor: grabbing; }
+    .brand-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .badge {
+      background: #6366f1; color: #fff; font-size: 11px; font-weight: 700;
+      padding: 2px 7px; border-radius: 4px; letter-spacing: 0.5px;
+    }
+    .title {
+      color: #f8fafc; font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 480px;
+    }
+    .actions { display: flex; align-items: center; gap: 6px; }
+    .btn {
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #cbd5e1; border-radius: 6px; height: 28px; padding: 0 10px;
+      font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+    .btn-close:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+    .video-wrap { flex: 1; position: relative; background: #000; width: 100%; height: 100%; overflow: hidden; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+  `;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'backdrop';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+
+  const header = document.createElement('div');
+  header.className = 'header';
+  header.innerHTML = `
+    <div class="brand-group">
+      <span class="badge">CloudPlay</span>
+      <span class="title" title="${title}">${title}</span>
+    </div>
+    <div class="actions">
+      <button class="btn btn-theater" title="Toggle Theater Mode">⛶ Theater</button>
+      <button class="btn btn-popout" title="Open in Full Tab / Standalone Window">↗ Full Tab</button>
+      <button class="btn btn-close" title="Close (Esc)">✕</button>
+    </div>
+  `;
+
+  const videoWrap = document.createElement('div');
+  videoWrap.className = 'video-wrap';
+  const iframe = document.createElement('iframe');
+  iframe.src = embedUrl;
+  iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
+  iframe.setAttribute('allowfullscreen', 'true');
+  videoWrap.appendChild(iframe);
+
+  modal.appendChild(header);
+  modal.appendChild(videoWrap);
+  backdrop.appendChild(modal);
+
+  shadow.appendChild(style);
+  shadow.appendChild(backdrop);
+  document.body.appendChild(host);
+
+  // Dragging support
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  header.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (modal.classList.contains('theater')) return;
+
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = modal.getBoundingClientRect();
+    initialLeft = rect.left;
+    initialTop = rect.top;
+
+    modal.style.position = 'fixed';
+    modal.style.left = `${initialLeft}px`;
+    modal.style.top = `${initialTop}px`;
+    modal.style.margin = '0';
+    modal.style.transform = 'none';
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDragging) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      modal.style.left = `${Math.max(10, Math.min(window.innerWidth - 120, initialLeft + dx))}px`;
+      modal.style.top = `${Math.max(10, Math.min(window.innerHeight - 50, initialTop + dy))}px`;
+    };
+
+    const onMouseUp = () => {
+      isDragging = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  });
+
+  // Action listeners
+  const theaterBtn = header.querySelector('.btn-theater') as HTMLButtonElement;
+  theaterBtn.addEventListener('click', () => {
+    const isTheater = modal.classList.toggle('theater');
+    theaterBtn.innerHTML = isTheater ? '🗗 Restore' : '⛶ Theater';
+    if (isTheater) {
+      modal.style.left = '';
+      modal.style.top = '';
+      modal.style.margin = '';
+    }
+  });
+
+  const popoutBtn = header.querySelector('.btn-popout') as HTMLButtonElement;
+  popoutBtn.addEventListener('click', () => {
+    removeInPageModal();
+    ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url: targetUrl });
+  });
+
+  const closeBtn = header.querySelector('.btn-close') as HTMLButtonElement;
+  closeBtn.addEventListener('click', () => {
+    removeInPageModal();
+  });
+
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) {
+      removeInPageModal();
+    }
+  });
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      removeInPageModal();
+      window.removeEventListener('keydown', onKeyDown);
+    }
+  };
+  window.addEventListener('keydown', onKeyDown);
+}
+
+// Receive messages from background script for in-page hybrid playback
+ext.runtime.onMessage?.addListener((message: any, _sender: any, sendResponse: any) => {
+  if (message?.type === 'PLAY_IN_PAGE' && message?.url) {
+    showInPageModal(message.url);
+    try { sendResponse({ handled: true }); } catch {}
+    return true;
+  }
+  return undefined;
+});
 
 
