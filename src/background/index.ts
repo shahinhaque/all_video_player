@@ -1,33 +1,29 @@
 import { ext, getRawBrowser, getRawChrome } from '../lib/browser.js';
 
-// Setup declarativeNetRequest rules to remove restrictive CORS/CORP and Content-Disposition headers for Google Drive & cloud streams
+// Setup declarativeNetRequest rules strictly for media streams initiated by our extension player
 async function setupDeclarativeRules() {
   const dnr = (globalThis as any).chrome?.declarativeNetRequest || (globalThis as any).browser?.declarativeNetRequest;
   if (!dnr?.updateDynamicRules) return;
 
+  // Always purge ALL existing dynamic rules first so no stale or global wildcard rules persist
+  try {
+    const existing = await dnr.getDynamicRules?.();
+    if (existing && existing.length > 0) {
+      await dnr.updateDynamicRules({ removeRuleIds: existing.map((r: any) => r.id) });
+    }
+    const session = await dnr.getSessionRules?.();
+    if (session && session.length > 0) {
+      await dnr.updateSessionRules({ removeRuleIds: session.map((r: any) => r.id) });
+    }
+  } catch (err) {
+    console.warn('Error clearing previous DNR rules:', err);
+  }
+
   const extId = (globalThis as any).chrome?.runtime?.id || (globalThis as any).browser?.runtime?.id || ext.runtime?.id;
-  const initiatorDomains = extId ? [extId] : undefined;
+  // If extId is not a valid string, never register any rules — never risk global interception
+  if (!extId || typeof extId !== 'string') return;
 
   const rules: any[] = [
-    {
-      id: 1000,
-      priority: 1,
-      action: {
-        type: 'modifyHeaders',
-        responseHeaders: [
-          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-          { header: 'Access-Control-Allow-Headers', operation: 'Range, Accept-Ranges, Content-Type, Authorization' },
-          { header: 'Access-Control-Expose-Headers', operation: 'Content-Range, Content-Length, Accept-Ranges' },
-          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-        ],
-      },
-      condition: {
-        urlFilter: '*',
-        resourceTypes: ['media', 'xmlhttprequest'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
-      },
-    },
     {
       id: 1001,
       priority: 1,
@@ -40,33 +36,12 @@ async function setupDeclarativeRules() {
           { header: 'Access-Control-Expose-Headers', operation: 'Content-Range, Content-Length, Accept-Ranges' },
           { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
           { header: 'Content-Disposition', operation: 'remove' },
-          { header: 'X-Frame-Options', operation: 'remove' },
         ],
       },
       condition: {
         urlFilter: '*://*.googleusercontent.com/*',
         resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
-      },
-    },
-    {
-      id: 1002,
-      priority: 1,
-      action: {
-        type: 'modifyHeaders',
-        responseHeaders: [
-          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-          { header: 'Content-Disposition', operation: 'remove' },
-          { header: 'X-Frame-Options', operation: 'remove' },
-          { header: 'Content-Security-Policy', operation: 'remove' },
-        ],
-      },
-      condition: {
-        urlFilter: '*://drive.google.com/*',
-        resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
+        initiatorDomains: [extId],
       },
     },
     {
@@ -85,7 +60,7 @@ async function setupDeclarativeRules() {
       condition: {
         urlFilter: '*://*.userstorage.mega.co.nz/*',
         resourceTypes: ['media', 'xmlhttprequest'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
+        initiatorDomains: [extId],
       },
     },
     {
@@ -101,7 +76,7 @@ async function setupDeclarativeRules() {
       condition: {
         urlFilter: '*://*.mega.co.nz/*',
         resourceTypes: ['media', 'xmlhttprequest'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
+        initiatorDomains: [extId],
       },
     },
     {
@@ -117,14 +92,13 @@ async function setupDeclarativeRules() {
       condition: {
         urlFilter: '*://*.mega.nz/*',
         resourceTypes: ['media', 'xmlhttprequest'],
-        ...(initiatorDomains ? { initiatorDomains } : {}),
+        initiatorDomains: [extId],
       },
     },
   ];
 
   try {
     await dnr.updateDynamicRules({
-      removeRuleIds: [1000, 1001, 1002, 1003, 1004, 1005],
       addRules: rules,
     });
   } catch (err) {
@@ -187,17 +161,11 @@ function setupFirefoxWebRequest() {
         const origin = details.originUrl || details.documentUrl || '';
         const url = details.url || '';
 
-        // Only modify headers for requests initiated by our extension player, or for targeted cloud stream CDNs
-        const isFromExtension = extPrefix && origin.startsWith(extPrefix);
-        const isCloudMedia =
-          url.includes('googleusercontent.com') ||
-          url.includes('drive.google.com') ||
-          url.includes('userstorage.mega.co.nz') ||
-          url.includes('mega.nz') ||
-          url.includes('mega.co.nz');
-
-        if (!isFromExtension && !isCloudMedia) {
-          return undefined; // Do not touch normal websites like YouTube, Twitter, etc.
+        // STRICT SAFETY: Only modify headers for requests initiated by our extension player!
+        // Never touch requests initiated by Google Drive, YouTube, or any web page.
+        const isFromExtension = Boolean(extPrefix && origin.startsWith(extPrefix));
+        if (!isFromExtension) {
+          return undefined;
         }
 
         const headers = details.responseHeaders || [];

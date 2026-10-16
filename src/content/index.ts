@@ -430,85 +430,146 @@ document.addEventListener('contextmenu', (e) => {
   setTimeout(injectInPageContextMenu, 200);
 });
 
+function removeCompanionMenu(): void {
+  const existing = document.getElementById('cloudplay-companion-menu');
+  if (existing) existing.remove();
+}
+
 function injectInPageContextMenu(): void {
-  // 1. Google Drive custom context menu (seamlessly inside menu alongside Open With, Download, etc.)
+  // 1. Google Drive: Show docked companion bar adjacent to Google Drive's native menu
+  // NEVER inject inside div[role="menu"] — Closure's internal component tree will crash on foreign nodes.
   if (location.hostname.includes('drive.google.com')) {
     const gdriveMenu = document.querySelector('div[role="menu"]');
-    if (gdriveMenu && !gdriveMenu.querySelector('.cloudplay-context-item')) {
-      const item = document.createElement('div');
-      item.className = 'goog-menuitem cloudplay-context-item';
-      item.setAttribute('role', 'menuitem');
-      item.setAttribute('tabindex', '-1');
-      item.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 8px 16px;
-        cursor: pointer;
-        font-size: 13px;
-        color: #202124;
-        font-family: Roboto, Arial, sans-serif;
-        font-weight: 500;
-        transition: background-color 0.1s ease;
-        user-select: none;
-        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-      `;
-      item.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; width:18px; text-align:center;">▶</span> <span>Play in CloudPlay</span>`;
+    if (gdriveMenu && gdriveMenu instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+      const rect = gdriveMenu.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const companion = document.createElement('div');
+        companion.id = 'cloudplay-companion-menu';
 
-      // Stop pointer/mouse events from bubbling to Google Drive's Closure delegator so Closure doesn't throw on lookup
-      const stopEvents = ['mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'pointermove'];
-      stopEvents.forEach((evt) => {
-        item.addEventListener(evt, (e) => e.stopPropagation());
-      });
+        // Position immediately below the native menu, or above if close to viewport bottom
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const topPos = spaceBelow > 50 ? rect.bottom + 4 : Math.max(10, rect.top - 46);
 
-      item.addEventListener('mouseenter', () => { item.style.backgroundColor = '#f1f3f4'; });
-      item.addEventListener('mouseleave', () => { item.style.backgroundColor = 'transparent'; });
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const url = lastTargetUrl || location.href;
-        ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
-      });
+        companion.style.cssText = `
+          position: fixed;
+          top: ${topPos}px;
+          left: ${rect.left}px;
+          width: ${Math.max(rect.width, 220)}px;
+          background: #ffffff;
+          border-radius: 8px;
+          box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);
+          z-index: 2147483647;
+          display: flex;
+          align-items: center;
+          padding: 10px 16px;
+          cursor: pointer;
+          font-family: Roboto, Arial, sans-serif;
+          font-size: 13px;
+          font-weight: 500;
+          color: #202124;
+          user-select: none;
+          box-sizing: border-box;
+          transition: background-color 0.12s ease;
+        `;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:10px;">▶</span> <span>Play in CloudPlay</span>`;
 
-      gdriveMenu.insertBefore(item, gdriveMenu.children[1] || gdriveMenu.firstChild);
+        companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = '#f1f3f4'; });
+        companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = '#ffffff'; });
+        companion.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          removeCompanionMenu();
+          const url = lastTargetUrl || location.href;
+          ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+        });
+
+        document.body.appendChild(companion);
+
+        const dismissListener = (e: MouseEvent) => {
+          if (!companion.contains(e.target as Node)) {
+            removeCompanionMenu();
+            document.removeEventListener('mousedown', dismissListener, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('mousedown', dismissListener, true), 80);
+
+        const checkInterval = setInterval(() => {
+          if (!document.body.contains(gdriveMenu) || gdriveMenu.offsetParent === null) {
+            removeCompanionMenu();
+            clearInterval(checkInterval);
+          }
+        }, 150);
+      }
     }
+    return;
   }
 
-  // 2. YouTube custom HTML5 video player context menu
+  // 2. YouTube: Docked above YouTube's HTML5 player context menu popup
   if (location.hostname.includes('youtube.com')) {
-    const ytMenu = document.querySelector('.ytp-popup.ytp-contextmenu .ytp-panel-menu');
-    if (ytMenu && !ytMenu.querySelector('.cloudplay-yt-menuitem')) {
-      const item = document.createElement('div');
-      item.className = 'ytp-menuitem cloudplay-yt-menuitem';
-      item.setAttribute('role', 'menuitem');
-      item.setAttribute('tabindex', '0');
-      item.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        cursor: pointer;
-        color: #eee;
-        padding: 0 15px;
-        height: 40px;
-        font-size: 12px;
-        user-select: none;
-      `;
-      item.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold;">▶</span> <span class="ytp-menuitem-label">Play in CloudPlay</span>`;
-      item.addEventListener('mouseenter', () => { item.style.backgroundColor = 'rgba(255, 255, 255, 0.1)'; });
-      item.addEventListener('mouseleave', () => { item.style.backgroundColor = 'transparent'; });
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const popup = document.querySelector('.ytp-popup.ytp-contextmenu') as HTMLElement;
-        if (popup) popup.style.display = 'none';
-        const url = lastTargetUrl || location.href;
-        ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
-      });
-      ytMenu.prepend(item);
+    const ytPopup = document.querySelector('.ytp-popup.ytp-contextmenu');
+    if (ytPopup && ytPopup instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+      const rect = ytPopup.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const companion = document.createElement('div');
+        companion.id = 'cloudplay-companion-menu';
+        const topPos = Math.max(10, rect.top - 42);
+        companion.style.cssText = `
+          position: fixed;
+          top: ${topPos}px;
+          left: ${rect.left}px;
+          min-width: ${rect.width}px;
+          background: rgba(28, 28, 28, 0.95);
+          backdrop-filter: blur(8px);
+          border-radius: 8px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+          z-index: 2147483647;
+          display: flex;
+          align-items: center;
+          padding: 8px 14px;
+          cursor: pointer;
+          font-family: Roboto, Arial, sans-serif;
+          font-size: 12px;
+          font-weight: 500;
+          color: #eeeeee;
+          user-select: none;
+          box-sizing: border-box;
+          transition: background-color 0.12s ease;
+        `;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:13px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in CloudPlay</span>`;
+        companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = 'rgba(60, 60, 60, 0.95)'; });
+        companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = 'rgba(28, 28, 28, 0.95)'; });
+        companion.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          removeCompanionMenu();
+          const popup = document.querySelector('.ytp-popup.ytp-contextmenu') as HTMLElement;
+          if (popup) popup.style.display = 'none';
+          const url = lastTargetUrl || location.href;
+          ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+        });
+
+        document.body.appendChild(companion);
+
+        const dismissListener = (e: MouseEvent) => {
+          if (!companion.contains(e.target as Node)) {
+            removeCompanionMenu();
+            document.removeEventListener('mousedown', dismissListener, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('mousedown', dismissListener, true), 80);
+
+        const checkInterval = setInterval(() => {
+          if (!document.body.contains(ytPopup) || ytPopup.offsetParent === null || (ytPopup as HTMLElement).style.display === 'none') {
+            removeCompanionMenu();
+            clearInterval(checkInterval);
+          }
+        }, 150);
+      }
     }
+    return;
   }
 
-  // 3. MEGA custom context menu
+  // 3. MEGA: Attached to dropdown menu safely
   const megaMenu = document.querySelector('.dropdown-content, .body-dropdown, .context-menu');
   if (megaMenu && !megaMenu.querySelector('.cloudplay-context-item')) {
     const item = document.createElement('a');
@@ -531,51 +592,69 @@ function injectInPageContextMenu(): void {
       ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
     });
     megaMenu.prepend(item);
+    return;
   }
 
-  // 4. OneDrive custom context menu
-  const oneDriveMenu = document.querySelector('.ms-ContextualMenu-list, .ms-ContextualMenu');
-  if (oneDriveMenu && !oneDriveMenu.querySelector('.cloudplay-context-item')) {
-    const item = document.createElement('li');
-    item.className = 'ms-ContextualMenu-item cloudplay-context-item';
-    item.setAttribute('role', 'presentation');
-    item.style.cssText = `list-style: none; padding: 0; margin: 0;`;
+  // 4. OneDrive / SharePoint: Docked companion bar outside React tree
+  if (location.hostname.includes('live.com') || location.hostname.includes('sharepoint.com') || location.hostname.includes('1drv.ms')) {
+    const oneDriveMenu = document.querySelector('.ms-ContextualMenu, .ms-ContextualMenu-list');
+    if (oneDriveMenu && oneDriveMenu instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+      const rect = oneDriveMenu.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const companion = document.createElement('div');
+        companion.id = 'cloudplay-companion-menu';
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const topPos = spaceBelow > 50 ? rect.bottom + 4 : Math.max(10, rect.top - 46);
+        companion.style.cssText = `
+          position: fixed;
+          top: ${topPos}px;
+          left: ${rect.left}px;
+          width: ${Math.max(rect.width, 200)}px;
+          background: #ffffff;
+          border-radius: 4px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+          z-index: 2147483647;
+          display: flex;
+          align-items: center;
+          padding: 9px 14px;
+          cursor: pointer;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          font-size: 13px;
+          font-weight: 500;
+          color: #323130;
+          user-select: none;
+          box-sizing: border-box;
+          transition: background-color 0.12s ease;
+        `;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in CloudPlay</span>`;
+        companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = '#f3f2f1'; });
+        companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = '#ffffff'; });
+        companion.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          removeCompanionMenu();
+          const url = lastTargetUrl || location.href;
+          ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+        });
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'ms-ContextualMenu-link';
-    btn.setAttribute('role', 'menuitem');
-    btn.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      padding: 8px 16px;
-      cursor: pointer;
-      font-size: 13px;
-      background: transparent;
-      border: none;
-      text-align: left;
-      color: inherit;
-    `;
-    btn.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
+        document.body.appendChild(companion);
 
-    const stopEvents = ['mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'mousemove', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'pointermove'];
-    stopEvents.forEach((evt) => {
-      item.addEventListener(evt, (e) => e.stopPropagation());
-    });
+        const dismissListener = (e: MouseEvent) => {
+          if (!companion.contains(e.target as Node)) {
+            removeCompanionMenu();
+            document.removeEventListener('mousedown', dismissListener, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('mousedown', dismissListener, true), 80);
 
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(0,0,0,0.05)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const url = lastTargetUrl || location.href;
-      ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
-    });
-
-    item.appendChild(btn);
-    oneDriveMenu.insertBefore(item, oneDriveMenu.firstChild);
+        const checkInterval = setInterval(() => {
+          if (!document.body.contains(oneDriveMenu) || oneDriveMenu.offsetParent === null) {
+            removeCompanionMenu();
+            clearInterval(checkInterval);
+          }
+        }, 150);
+      }
+    }
   }
 }
 
