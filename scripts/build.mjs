@@ -73,7 +73,6 @@ function manifest(target) {
   if (target === 'chrome') {
     m.background = { service_worker: 'background.js' };
     m.minimum_chrome_version = '110';
-    m.optional_host_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];
   } else {
     m.background = { scripts: ['background.js'] };
     m.browser_specific_settings = { gecko: { id: 'cloudplay@itmagnet.com.au', strict_min_version: '115.0' } };
