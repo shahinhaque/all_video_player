@@ -271,6 +271,40 @@ function parseSrtOrVttToCues(content: string): SubtitleCue[] {
 }
 
 /**
+ * Fast binary search to find the active subtitle cue for a given playback time.
+ */
+export function findActiveCue(cues: SubtitleCue[], time: number): SubtitleCue | null {
+  if (!cues || cues.length === 0) return null;
+
+  let low = 0;
+  let high = cues.length - 1;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const cue = cues[mid];
+    if (time >= cue.start && time <= cue.end) {
+      return cue;
+    }
+    if (time < cue.start) {
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  // Check boundary neighbors in case of slight overlap or float precision
+  const candidateIdx = Math.max(0, Math.min(cues.length - 1, low));
+  if (cues[candidateIdx] && time >= cues[candidateIdx].start && time <= cues[candidateIdx].end) {
+    return cues[candidateIdx];
+  }
+  if (candidateIdx > 0 && cues[candidateIdx - 1] && time >= cues[candidateIdx - 1].start && time <= cues[candidateIdx - 1].end) {
+    return cues[candidateIdx - 1];
+  }
+
+  return null;
+}
+
+/**
  * Checks if a filename has a subtitle extension (.srt, .vtt, .ass, or .ssa).
  */
 export function isSubtitleName(filename: string): boolean {

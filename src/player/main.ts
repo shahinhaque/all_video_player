@@ -5,7 +5,7 @@ import { createPlaybackEngine } from '../engines/index.js';
 import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource, AudioTrackInfo, EngineHost } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
-import { createSubtitleTrackUrl, isSubtitleName, parseSubtitlesToCues, SubtitleCue } from '../lib/subtitles.js';
+import { createSubtitleTrackUrl, isSubtitleName, parseSubtitlesToCues, findActiveCue, SubtitleCue } from '../lib/subtitles.js';
 import { PrefetchedByteSource } from '../lib/network.js';
 import { ext, getExtensionPermissions } from '../lib/browser.js';
 
@@ -328,6 +328,7 @@ class PlayerController {
 
     // Time & Progress update
     this.video.addEventListener('timeupdate', () => this.onTimeUpdate());
+    this.video.addEventListener('seeked', () => this.onTimeUpdate());
     this.video.addEventListener('progress', () => this.onProgress());
     this.video.addEventListener('waiting', () => this.showBuffering(true));
     this.video.addEventListener('playing', () => this.showBuffering(false));
@@ -662,7 +663,7 @@ class PlayerController {
 
       // Update subtitle overlay from active cues if active
       if (this.activeCues.length > 0) {
-        const active = this.activeCues.find((c) => cur >= c.start && cur <= c.end);
+        const active = findActiveCue(this.activeCues, cur);
         this.displaySubtitle(active ? active.text : null);
       }
 

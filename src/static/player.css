@@ -103,18 +103,33 @@ html, body {
   max-width: 85%;
   text-align: center;
   color: #ffffff;
-  font-size: 1.45rem;
+  font-size: clamp(1.15rem, 2.2vw, 2.2rem);
   font-weight: 600;
   line-height: 1.4;
   letter-spacing: 0.02em;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95), 0 0 10px rgba(0, 0, 0, 0.85);
-  background: rgba(0, 0, 0, 0.75);
-  padding: 6px 18px;
-  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  padding: 8px 20px;
+  border-radius: 8px;
   pointer-events: none;
   z-index: 15;
   white-space: pre-line;
-  transition: opacity 0.1s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+:fullscreen .subtitle-overlay,
+.video-wrapper:fullscreen .subtitle-overlay {
+  bottom: 104px;
+}
+
+video::cue {
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.78);
+  font-size: 1.35rem;
+  font-weight: 600;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
 }
 
 /* Top Bar Overlay */

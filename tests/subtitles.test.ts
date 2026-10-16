@@ -8,6 +8,7 @@ import {
   parseSubtitleLanguage,
   pairSubtitlesWithVideos,
   parseSubtitlesToCues,
+  findActiveCue,
 } from '../src/lib/subtitles.js';
 import { MediaItem, SubtitleTrackInfo } from '../src/core/types.js';
 
@@ -188,6 +189,33 @@ Dialogue: 0,0:01:20.50,0:01:24.00,Default,,0,0,0,,{\\b1}Welcome{\\b0} back!\\NLi
     expect(cues[0].start).toBeCloseTo(80.5);
     expect(cues[0].end).toBeCloseTo(84.0);
     expect(cues[0].text).toBe('Welcome back!\nLine 2');
+  });
+});
+
+describe('findActiveCue Binary Search', () => {
+  const cues = [
+    { start: 1.0, end: 3.5, text: 'Cue 1' },
+    { start: 5.0, end: 8.0, text: 'Cue 2' },
+    { start: 10.0, end: 12.0, text: 'Cue 3' },
+  ];
+
+  it('returns null on empty cue lists or invalid time', () => {
+    expect(findActiveCue([], 2.0)).toBeNull();
+  });
+
+  it('finds active cue precisely within time bounds', () => {
+    expect(findActiveCue(cues, 1.0)?.text).toBe('Cue 1');
+    expect(findActiveCue(cues, 2.5)?.text).toBe('Cue 1');
+    expect(findActiveCue(cues, 3.5)?.text).toBe('Cue 1');
+    expect(findActiveCue(cues, 6.2)?.text).toBe('Cue 2');
+    expect(findActiveCue(cues, 11.0)?.text).toBe('Cue 3');
+  });
+
+  it('returns null when time is between cues or out of range', () => {
+    expect(findActiveCue(cues, 0.5)).toBeNull();
+    expect(findActiveCue(cues, 4.2)).toBeNull();
+    expect(findActiveCue(cues, 9.0)).toBeNull();
+    expect(findActiveCue(cues, 15.0)).toBeNull();
   });
 });
 

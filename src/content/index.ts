@@ -401,3 +401,139 @@ if (document.readyState === 'loading') {
   setTimeout(injectFloatingButton, 300);
 }
 
+// --- Custom Right-Click Context Menu Hook for Google Drive, MEGA, and OneDrive ---
+let lastContextTarget: HTMLElement | null = null;
+let lastTargetUrl: string | null = null;
+
+function resolveTargetUrl(el: HTMLElement | null): string {
+  if (!el) return location.href;
+
+  // 1. MEGA
+  if (location.hostname.includes('mega')) {
+    const row = el.closest('[data-node-id], .transfer-file-row, .grid-url-item, .files-grid-view .grid-table-row') as HTMLElement;
+    const nodeId = row?.dataset.nodeId || row?.dataset.id || row?.getAttribute('data-id') || row?.getAttribute('data-node-id');
+    const folderInfo = getMegaFolderInfo();
+    if (folderInfo && nodeId) {
+      return `https://mega.nz/folder/${folderInfo.folderId}#${folderInfo.folderKey}/file/${nodeId}`;
+    }
+  }
+
+  // 2. Google Drive
+  if (location.hostname.includes('drive.google.com')) {
+    const item = el.closest('[data-id], [data-target="doc"]') as HTMLElement;
+    const fileId = item?.dataset.id || item?.getAttribute('data-id');
+    if (fileId) {
+      return `https://drive.google.com/file/d/${fileId}/view`;
+    }
+  }
+
+  // 3. OneDrive
+  if (location.hostname.includes('live.com') || location.hostname.includes('sharepoint.com') || location.hostname.includes('1drv.ms')) {
+    const link = el.closest('a[href]') as HTMLAnchorElement;
+    if (link?.href && (link.href.includes('id=') || link.href.includes(':v:') || link.href.includes('onedrive'))) {
+      return link.href;
+    }
+  }
+
+  // Check any enclosing anchor tag
+  const anchor = el.closest('a[href]') as HTMLAnchorElement;
+  if (anchor?.href) return anchor.href;
+
+  return location.href;
+}
+
+document.addEventListener('contextmenu', (e) => {
+  lastContextTarget = e.target as HTMLElement;
+  lastTargetUrl = resolveTargetUrl(lastContextTarget);
+  setTimeout(injectInPageContextMenu, 80);
+  setTimeout(injectInPageContextMenu, 250);
+}, true);
+
+function injectInPageContextMenu(): void {
+  // 1. Google Drive custom context menu
+  const gdriveMenu = document.querySelector('div[role="menu"].a-v-T, div[role="menu"]');
+  if (gdriveMenu && !gdriveMenu.querySelector('.cloudplay-context-item')) {
+    const item = document.createElement('div');
+    item.className = 'a-v-T cloudplay-context-item';
+    item.setAttribute('role', 'menuitem');
+    item.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #202124;
+      font-weight: 500;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+    `;
+    item.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold;">▶</span> Play in CloudPlay`;
+    item.addEventListener('mouseenter', () => { item.style.background = '#f1f3f4'; });
+    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const url = lastTargetUrl || location.href;
+      ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+    });
+    gdriveMenu.prepend(item);
+  }
+
+  // 2. MEGA custom context menu
+  const megaMenu = document.querySelector('.dropdown-content, .body-dropdown, .context-menu');
+  if (megaMenu && !megaMenu.querySelector('.cloudplay-context-item')) {
+    const item = document.createElement('a');
+    item.className = 'dropdown-item cloudplay-context-item';
+    item.href = 'javascript:void(0);';
+    item.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #fff;
+    `;
+    item.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const url = lastTargetUrl || location.href;
+      ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+    });
+    megaMenu.prepend(item);
+  }
+
+  // 3. OneDrive custom context menu
+  const oneDriveMenu = document.querySelector('.ms-ContextualMenu, div[role="menu"]');
+  if (oneDriveMenu && !oneDriveMenu.querySelector('.cloudplay-context-item') && !oneDriveMenu.classList.contains('a-v-T')) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'ms-ContextualMenu-link cloudplay-context-item';
+    item.setAttribute('role', 'menuitem');
+    item.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      background: transparent;
+      border: none;
+      text-align: left;
+    `;
+    item.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
+    item.addEventListener('mouseenter', () => { item.style.background = 'rgba(0,0,0,0.05)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const url = lastTargetUrl || location.href;
+      ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
+    });
+    oneDriveMenu.prepend(item);
+  }
+}
+
+

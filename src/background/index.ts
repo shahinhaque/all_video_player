@@ -127,20 +127,26 @@ async function setupDeclarativeRules() {
 }
 
 // Setup Context Menus and Declarative Rules
-ext.runtime.onInstalled?.addListener(() => {
+function setupContextMenu() {
   try {
     ext.contextMenus?.removeAll(() => {
       const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
       ext.contextMenus?.create({
         id: 'cloudplay-open-link',
         title,
-        contexts: ['link', 'page'],
+        contexts: ['all'],
       });
     });
   } catch {}
+}
+
+ext.runtime.onInstalled?.addListener(() => {
+  setupContextMenu();
   setupDeclarativeRules();
   setupFirefoxWebRequest();
 });
+
+setupContextMenu();
 
 // Setup Firefox blocking webRequest for reliable CORS header override
 function setupFirefoxWebRequest() {
@@ -175,7 +181,7 @@ setupFirefoxWebRequest();
 
 ext.contextMenus?.onClicked.addListener((info: any, tab: any) => {
   if (info.menuItemId === 'cloudplay-open-link') {
-    const targetUrl = info.linkUrl || info.pageUrl;
+    const targetUrl = info.linkUrl || info.srcUrl || info.pageUrl || tab?.url;
     if (targetUrl) {
       const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(targetUrl)}`);
       ext.tabs.create({ url: playerUrl, index: (tab?.index ?? 0) + 1 });
