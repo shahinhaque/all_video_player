@@ -6,6 +6,10 @@ import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 // Cache for active local file handles
 const localFilesMap = new Map<string, File>();
 
+export function getLocalFile(id: string): File | undefined {
+  return localFilesMap.get(id);
+}
+
 export function registerLocalFile(file: File): MediaItem {
   const id = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   localFilesMap.set(id, file);
@@ -17,6 +21,18 @@ export function registerLocalFile(file: File): MediaItem {
     mime: file.type || guessMime(file.name),
     provider: 'local',
     ref: { localId: id },
+  };
+}
+
+export function registerLocalSubtitle(file: File): SubtitleTrackInfo {
+  const item = registerLocalFile(file);
+  return {
+    id: item.id,
+    name: file.name,
+    label: `${file.name} (Uploaded)`,
+    srclang: 'en',
+    provider: 'local',
+    ref: item.ref,
   };
 }
 
@@ -65,15 +81,18 @@ export class LocalProvider implements SourceProvider {
   }
 
   async open(item: MediaItem): Promise<RangeByteSource> {
-    const file = localFilesMap.get(item.ref.localId || item.id);
+    const file = localFilesMap.get(item.ref?.localId || item.id);
     if (!file) {
       throw new Error('Local file reference expired or was removed.');
     }
+
+    const directUrl = URL.createObjectURL(file);
 
     return {
       name: file.name,
       size: file.size,
       mime: file.type || guessMime(file.name),
+      directUrl,
       encrypted: false,
       async read(start: number, end: number): Promise<ReadableStream<Uint8Array>> {
         const slice = file.slice(start, end + 1);

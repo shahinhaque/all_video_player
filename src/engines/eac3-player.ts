@@ -40,8 +40,15 @@ export class Eac3AudioPlayer {
     }
 
     if (!this.decoder) {
-      const { decoder } = await import('@audio/decode-eac3');
-      this.decoder = await decoder();
+      try {
+        // @ts-ignore
+        const mod = await import('@audio/decode-eac3').catch(() => null);
+        if (mod && mod.decoder) {
+          this.decoder = await mod.decoder();
+        }
+      } catch {
+        // Optional decoder not present
+      }
     }
   }
 

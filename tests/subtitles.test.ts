@@ -7,6 +7,7 @@ import {
   isCompanionSubtitle,
   parseSubtitleLanguage,
   pairSubtitlesWithVideos,
+  parseSubtitlesToCues,
 } from '../src/lib/subtitles.js';
 import { MediaItem, SubtitleTrackInfo } from '../src/core/types.js';
 
@@ -138,3 +139,55 @@ describe('Companion Subtitle Detection & Matching', () => {
     expect(videos[1].subtitles?.[0].name).toBe('Episode 02.srt');
   });
 });
+
+describe('Timed Cues Parsing', () => {
+  it('parses SRT content with BOM into timed cues', () => {
+    const srt = `\uFEFF1
+00:00:01,250 --> 00:00:04,500
+Hello World!
+
+2
+00:01:10,000 --> 00:01:15,000
+Second subtitle line
+`;
+    const cues = parseSubtitlesToCues(srt, 'srt');
+    expect(cues).toHaveLength(2);
+    expect(cues[0].start).toBeCloseTo(1.25);
+    expect(cues[0].end).toBeCloseTo(4.5);
+    expect(cues[0].text).toBe('Hello World!');
+
+    expect(cues[1].start).toBeCloseTo(70.0);
+    expect(cues[1].end).toBeCloseTo(75.0);
+    expect(cues[1].text).toBe('Second subtitle line');
+  });
+
+  it('parses WebVTT content with HTML tags into clean timed cues', () => {
+    const vtt = `WEBVTT
+
+00:05.000 --> 00:08.500
+<i>Italic text</i> and <b>Bold</b>
+
+01:20.000 --> 01:25.000
+Subtitle cue 2
+`;
+    const cues = parseSubtitlesToCues(vtt, 'vtt');
+    expect(cues).toHaveLength(2);
+    expect(cues[0].start).toBeCloseTo(5.0);
+    expect(cues[0].end).toBeCloseTo(8.5);
+    expect(cues[0].text).toBe('Italic text and Bold');
+    expect(cues[1].start).toBeCloseTo(80.0);
+  });
+
+  it('parses ASS/SSA dialogue lines into clean timed cues', () => {
+    const ass = `[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:01:20.50,0:01:24.00,Default,,0,0,0,,{\\b1}Welcome{\\b0} back!\\NLine 2
+`;
+    const cues = parseSubtitlesToCues(ass, 'ass');
+    expect(cues).toHaveLength(1);
+    expect(cues[0].start).toBeCloseTo(80.5);
+    expect(cues[0].end).toBeCloseTo(84.0);
+    expect(cues[0].text).toBe('Welcome back!\nLine 2');
+  });
+});
+

@@ -4,9 +4,32 @@ import { MediaItem, SubtitleTrackInfo } from '../core/types.js';
  * Subtitles helper: converts SRT format to WebVTT format and creates object URLs for <track>.
  */
 
+export interface SubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export function parseTimestampToSeconds(ts: string): number {
+  const clean = ts.trim().replace(',', '.');
+  const parts = clean.split(':');
+  if (parts.length === 3) {
+    const h = parseFloat(parts[0]) || 0;
+    const m = parseFloat(parts[1]) || 0;
+    const s = parseFloat(parts[2]) || 0;
+    return h * 3600 + m * 60 + s;
+  }
+  if (parts.length === 2) {
+    const m = parseFloat(parts[0]) || 0;
+    const s = parseFloat(parts[1]) || 0;
+    return m * 60 + s;
+  }
+  return parseFloat(clean) || 0;
+}
+
 export function srtToVtt(srtContent: string): string {
-  // Normalize line endings
-  let text = srtContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  // Normalize line endings and strip UTF-8 BOM
+  let text = srtContent.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
   // Replace comma decimal separators in timestamps with period: 00:01:20,500 --> 00:01:20.500
   text = text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
@@ -121,6 +144,130 @@ export function createSubtitleTrackUrl(subContent: string, formatOrIsSrt: string
   }
   const blob = new Blob([vtt], { type: 'text/vtt' });
   return URL.createObjectURL(blob);
+}
+
+/**
+ * Parses subtitle text (SRT, WebVTT, ASS/SSA) into an array of timed cues.
+ */
+export function parseSubtitlesToCues(content: string, format?: string): SubtitleCue[] {
+  if (!content) return [];
+  const clean = content.replace(/^\uFEFF/, '').trim();
+  const lowerFmt = (format || '').toLowerCase();
+
+  const isAss =
+    lowerFmt === 'ass' ||
+    lowerFmt === 'ssa' ||
+    clean.toLowerCase().includes('[events]') ||
+    clean.toLowerCase().includes('[script info]');
+
+  if (isAss) {
+    return parseAssToCues(clean);
+  }
+
+  return parseSrtOrVttToCues(clean);
+}
+
+function parseAssToCues(assContent: string): SubtitleCue[] {
+  const lines = assContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const cues: SubtitleCue[] = [];
+  let inEvents = false;
+  let startIndex = 1;
+  let endIndex = 2;
+  let textIndex = 9;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inEvents = trimmed.toLowerCase() === '[events]';
+      continue;
+    }
+    if (!inEvents) continue;
+
+    if (trimmed.startsWith('Format:')) {
+      const headers = trimmed.substring(7).split(',').map((h) => h.trim().toLowerCase());
+      startIndex = headers.indexOf('start');
+      endIndex = headers.indexOf('end');
+      textIndex = headers.indexOf('text');
+      if (startIndex === -1) startIndex = 1;
+      if (endIndex === -1) endIndex = 2;
+      if (textIndex === -1) textIndex = headers.length - 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('Dialogue:')) {
+      const rest = trimmed.substring(9).trim();
+      const parts: string[] = [];
+      let cur = 0;
+      for (let i = 0; i < textIndex; i++) {
+        const nextComma = rest.indexOf(',', cur);
+        if (nextComma === -1) break;
+        parts.push(rest.substring(cur, nextComma));
+        cur = nextComma + 1;
+      }
+      parts.push(rest.substring(cur));
+
+      if (parts.length > textIndex) {
+        const rawStart = parts[startIndex]?.trim() || '';
+        const rawEnd = parts[endIndex]?.trim() || '';
+        let rawText = parts[textIndex] || '';
+
+        rawText = rawText.replace(/\{[^}]*\}/g, '');
+        rawText = rawText.replace(/\\N/g, '\n').replace(/\\n/g, '\n');
+        rawText = rawText.replace(/\\h/g, ' ');
+
+        const cleanText = rawText.trim();
+        if (rawStart && rawEnd && cleanText) {
+          const start = parseTimestampToSeconds(rawStart);
+          const end = parseTimestampToSeconds(rawEnd);
+          if (end > start) {
+            cues.push({ start, end, text: cleanText });
+          }
+        }
+      }
+    }
+  }
+
+  return cues.sort((a, b) => a.start - b.start);
+}
+
+function parseSrtOrVttToCues(content: string): SubtitleCue[] {
+  const cues: SubtitleCue[] = [];
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const blocks = normalized.split(/\n\s*\n+/);
+
+  const timestampRegex = /(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{2,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{2,3})/;
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+
+    let timeLineIdx = -1;
+    let match: RegExpMatchArray | null = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      match = lines[i].match(timestampRegex);
+      if (match) {
+        timeLineIdx = i;
+        break;
+      }
+    }
+
+    if (timeLineIdx !== -1 && match) {
+      const start = parseTimestampToSeconds(match[1]);
+      const end = parseTimestampToSeconds(match[2]);
+      const textLines = lines.slice(timeLineIdx + 1);
+      const text = textLines
+        .join('\n')
+        .replace(/<[^>]*>/g, '')
+        .trim();
+
+      if (text && end > start) {
+        cues.push({ start, end, text });
+      }
+    }
+  }
+
+  return cues.sort((a, b) => a.start - b.start);
 }
 
 /**

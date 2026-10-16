@@ -138,7 +138,7 @@ export class MkvDemuxer {
     }
   }
 
-  private demuxBuffer(chunk: Uint8Array): void {
+  public demuxBuffer(chunk: Uint8Array): void {
     let combined: Uint8Array;
     if (this.residualBuffer.length > 0) {
       combined = new Uint8Array(this.residualBuffer.length + chunk.length);
@@ -197,14 +197,31 @@ export class MkvDemuxer {
 
           if (this.activeSubtitleTrackNumber != null && block.trackNumber === this.activeSubtitleTrackNumber) {
             try {
-              const text = new TextDecoder('utf-8').decode(block.data).trim();
+              let text = new TextDecoder('utf-8').decode(block.data).trim();
               if (text) {
-                this.onSubtitleCueCallback?.({
-                  trackNumber: block.trackNumber,
-                  timeSec,
-                  durationSec: 3.0,
-                  text,
-                });
+                // Check if ASS/SSA format (starts with ReadOrder, Layer, Style, etc.)
+                const trackMeta = this.tracks.find((t) => t.trackNumber === block.trackNumber);
+                if (trackMeta && (trackMeta.codecId.includes('ASS') || trackMeta.codecId.includes('SSA'))) {
+                  let commaCount = 0;
+                  let idx = 0;
+                  while (idx < text.length && commaCount < 8) {
+                    if (text[idx] === ',') commaCount++;
+                    idx++;
+                  }
+                  if (commaCount >= 8) {
+                    text = text.substring(idx);
+                  }
+                }
+                // Strip styling and normalize breaks
+                text = text.replace(/\{[^}]*\}/g, '').replace(/\\N/g, '\n').replace(/\\n/g, '\n').replace(/\\h/g, ' ').trim();
+                if (text) {
+                  this.onSubtitleCueCallback?.({
+                    trackNumber: block.trackNumber,
+                    timeSec,
+                    durationSec: 3.5,
+                    text,
+                  });
+                }
               }
             } catch {}
           }

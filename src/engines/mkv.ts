@@ -1,8 +1,9 @@
-import { PlaybackEngine, RangeByteSource, EngineHost } from '../core/types.js';
+import { PlaybackEngine, RangeByteSource, EngineHost, AudioTrackInfo, SubtitleTrackInfo } from '../core/types.js';
 import { PlayerError } from '../core/errors.js';
 import { readAll } from '../lib/util.js';
 import { fromTimeRanges, calculateEvictionRanges } from '../lib/buffer.js';
 import { parseMkvHeaders, MkvHeaderInfo } from './ebml.js';
+import type { MkvDemuxer } from './mkv-demuxer.js';
 
 export interface MkvEngineOptions {
   chunkSize?: number;
@@ -32,6 +33,13 @@ export class MkvEngine implements PlaybackEngine {
   private headerInfo: MkvHeaderInfo | null = null;
   private currentByteOffset = 0;
   private chunkSize: number;
+
+  private mkvDemuxer: MkvDemuxer | null = null;
+  private audioTracks: AudioTrackInfo[] = [];
+  private subtitleTracks: SubtitleTrackInfo[] = [];
+  private activeAudioTrackId: string | null = null;
+  private activeSubtitleTrackId: string | null = null;
+  private subtitleCues: { start: number; end: number; text: string }[] = [];
 
   constructor(video: HTMLVideoElement, src: RangeByteSource, host: EngineHost, options?: MkvEngineOptions) {
     this.video = video;
@@ -74,6 +82,58 @@ export class MkvEngine implements PlaybackEngine {
     this.video.addEventListener('seeking', this.onSeeking);
     this.video.addEventListener('timeupdate', this.onTimeUpdate, { signal: this.abortCtrl.signal });
     this.pruneTimer = setInterval(() => this.pruneBuffer(), 3000);
+
+    // Initialize MkvDemuxer to discover tracks (audio and embedded subtitles)
+    try {
+      const { MkvDemuxer } = await import('./mkv-demuxer.js');
+      this.mkvDemuxer = new MkvDemuxer(this.src);
+      const info = await this.mkvDemuxer.parseHeaders();
+      if (info && !this.isDestroyed) {
+        const subTrks = info.tracks.filter((t) => t.trackType === 'subtitle');
+        const audioTrks = info.tracks.filter((t) => t.trackType === 'audio');
+
+        this.subtitleTracks = subTrks.map((t, i) => ({
+          id: `mkv-sub-${t.trackNumber}`,
+          name: t.name || `${t.language ? t.language.toUpperCase() + ' ' : ''}Subtitle ${i + 1}`,
+          label: t.name || `${t.language ? t.language.toUpperCase() + ' ' : ''}Subtitle ${i + 1} (Embedded)`,
+          srclang: t.language || 'en',
+          provider: 'local',
+          ref: { trackNumber: String(t.trackNumber) },
+          isDefault: t.isDefault,
+        }));
+
+        this.audioTracks = audioTrks.map((t, i) => {
+          const langStr = t.language ? t.language.toUpperCase() : '';
+          const codecStr = t.codecId.replace(/^A_/, '');
+          const chStr = t.channels === 6 ? '5.1' : t.channels === 2 ? 'Stereo' : t.channels ? `${t.channels}ch` : '';
+          const descParts = [langStr, t.name, codecStr, chStr].filter(Boolean);
+          return {
+            id: String(t.trackNumber),
+            label: descParts.length > 0 ? descParts.join(' - ') : `Track ${i + 1}`,
+            language: t.language,
+            codec: t.codecId,
+            channels: t.channels,
+            isDefault: t.isDefault,
+          };
+        });
+
+        if (this.audioTracks.length > 0) {
+          const defAudio = this.audioTracks.find((t) => t.isDefault) || this.audioTracks[0];
+          this.activeAudioTrackId = defAudio.id;
+          this.host.onAudioTracksDiscovered?.(this.audioTracks, defAudio.id);
+        }
+
+        if (this.subtitleTracks.length > 0) {
+          const defSub = this.subtitleTracks.find((s) => s.isDefault) || this.subtitleTracks[0];
+          this.host.onSubtitleTracksDiscovered?.(this.subtitleTracks, defSub?.id);
+          if (defSub) {
+            this.setSubtitleTrack(defSub.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to initialize MKV demuxer in MkvEngine:', e);
+    }
 
     // Initial stream loop
     this.startStreaming(startTime);
@@ -191,6 +251,11 @@ export class MkvEngine implements PlaybackEngine {
 
   private onTimeUpdate = () => {
     this.pruneBuffer();
+    if (this.activeSubtitleTrackId && this.subtitleCues.length > 0) {
+      const ct = this.video.currentTime;
+      const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
+      this.host.onSubtitleText?.(active ? active.text : null);
+    }
   };
 
   private async startStreaming(startSec: number = 0): Promise<void> {
@@ -249,13 +314,15 @@ export class MkvEngine implements PlaybackEngine {
         throw new PlayerError('codec', 'Browser MSE cannot allocate SourceBuffer for this MKV stream.');
       }
 
-      // Feed initial cluster/header data to SourceBuffer
+      // Feed initial cluster/header data to SourceBuffer and demuxer
+      this.mkvDemuxer?.demuxBuffer(initialChunk);
       this.queueBuffer(initialChunk);
       this.currentByteOffset = initialChunk.length;
 
       if (startSec > 0 && headerInfo.duration > 0 && fileSize > 0) {
         const estByte = Math.floor((startSec / headerInfo.duration) * fileSize);
         this.currentByteOffset = Math.min(estByte, fileSize - 1);
+        this.mkvDemuxer?.seek(startSec);
       }
     } catch (err) {
       if (this.isDestroyed || this.abortCtrl.signal.aborted) return;
@@ -289,6 +356,7 @@ export class MkvEngine implements PlaybackEngine {
 
         if (chunk.length === 0) break;
 
+        this.mkvDemuxer?.demuxBuffer(chunk);
         this.queueBuffer(chunk);
         this.currentByteOffset += chunk.length;
       } catch (err) {
@@ -314,6 +382,8 @@ export class MkvEngine implements PlaybackEngine {
   private onSeeking = () => {
     if (this.isDestroyed || !this.video) return;
     const targetTime = this.video.currentTime;
+    this.mkvDemuxer?.seek(targetTime);
+
     const ranges = this.video.buffered;
     for (let i = 0; i < ranges.length; i++) {
       if (ranges.start(i) <= targetTime && targetTime <= ranges.end(i)) {
@@ -333,6 +403,49 @@ export class MkvEngine implements PlaybackEngine {
     }
   };
 
+  getAudioTracks(): AudioTrackInfo[] {
+    return this.audioTracks;
+  }
+
+  async setAudioTrack(trackId: string): Promise<void> {
+    this.activeAudioTrackId = trackId;
+    const trackNum = parseInt(trackId, 10);
+    this.mkvDemuxer?.setActiveAudioTrack(trackNum);
+  }
+
+  getActiveAudioTrack(): string | null {
+    return this.activeAudioTrackId;
+  }
+
+  getSubtitleTracks(): SubtitleTrackInfo[] {
+    return this.subtitleTracks;
+  }
+
+  async setSubtitleTrack(trackId: string | null): Promise<void> {
+    this.activeSubtitleTrackId = trackId;
+    if (!this.mkvDemuxer) return;
+
+    if (!trackId) {
+      this.mkvDemuxer.setActiveSubtitleTrack(null);
+      this.subtitleCues = [];
+      this.host.onSubtitleText?.(null);
+      return;
+    }
+
+    const match = trackId.match(/^mkv-sub-(\d+)$/);
+    if (!match) return;
+    const trackNum = parseInt(match[1], 10);
+    this.subtitleCues = [];
+    this.mkvDemuxer.setActiveSubtitleTrack(trackNum);
+
+    this.mkvDemuxer.onSubtitleCue((cue) => {
+      if (this.activeSubtitleTrackId !== trackId) return;
+      const start = cue.timeSec;
+      const end = cue.timeSec + (cue.durationSec || 3.5);
+      this.subtitleCues.push({ start, end, text: cue.text });
+    });
+  }
+
   destroy(): void {
     this.isDestroyed = true;
     if (this.pruneTimer) {
@@ -340,6 +453,7 @@ export class MkvEngine implements PlaybackEngine {
       this.pruneTimer = null;
     }
     this.abortCtrl.abort();
+    this.mkvDemuxer?.destroy();
     this.video.removeEventListener('seeking', this.onSeeking);
     this.video.removeEventListener('timeupdate', this.onTimeUpdate);
 

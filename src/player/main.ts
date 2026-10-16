@@ -1,11 +1,11 @@
 import { resolveUrl, PROVIDERS } from '../providers/index.js';
-import { createLocalPlaylist } from '../providers/local.js';
+import { createLocalPlaylist, registerLocalFile } from '../providers/local.js';
 import { PlaylistManager } from '../core/playlist.js';
 import { createPlaybackEngine } from '../engines/index.js';
 import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource, AudioTrackInfo, EngineHost } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
-import { createSubtitleTrackUrl, isSubtitleName } from '../lib/subtitles.js';
+import { createSubtitleTrackUrl, isSubtitleName, parseSubtitlesToCues, SubtitleCue } from '../lib/subtitles.js';
 import { PrefetchedByteSource } from '../lib/network.js';
 import { ext, getExtensionPermissions } from '../lib/browser.js';
 
@@ -63,6 +63,8 @@ class PlayerController {
   private activeAudioTrackId: string | null = null;
   private currentSubtitleTracks: SubtitleTrackInfo[] = [];
   private activeSubtitleTrackId: string | null = null;
+  private activeCues: SubtitleCue[] = [];
+  private loadedSubtitleContents = new Map<string, string>();
 
   private btnPip = document.getElementById('btn-pip') as HTMLElement;
   private btnFullscreen = document.getElementById('btn-fullscreen') as HTMLElement;
@@ -239,12 +241,15 @@ class PlayerController {
             }
           }
           if (selectedId && !this.activeSubtitleTrackId) {
-            this.activeSubtitleTrackId = selectedId;
+            this.selectSubtitleTrack(selectedId);
+          } else {
+            this.renderSubtitleTracksMenu();
           }
-          this.renderSubtitleTracksMenu();
         },
         onSubtitleText: (text: string | null) => {
-          this.displaySubtitle(text);
+          if (this.activeSubtitleTrackId?.startsWith('mkv-sub-')) {
+            this.displaySubtitle(text);
+          }
         },
       };
 
@@ -268,9 +273,11 @@ class PlayerController {
       }
       await engine.attach(savedSec);
 
+      this.discoverNativeTextTracks();
+
       // Auto-load companion subtitles if present
       if (item.subtitles && item.subtitles.length > 0) {
-        this.loadCompanionSubtitle(item.subtitles[0]);
+        await this.selectSubtitleTrack(item.subtitles[0].id);
       }
 
       this.video.play().catch(() => {
@@ -324,6 +331,10 @@ class PlayerController {
     this.video.addEventListener('progress', () => this.onProgress());
     this.video.addEventListener('waiting', () => this.showBuffering(true));
     this.video.addEventListener('playing', () => this.showBuffering(false));
+    this.video.addEventListener('loadedmetadata', () => this.discoverNativeTextTracks());
+    if (this.video.textTracks) {
+      this.video.textTracks.addEventListener('addtrack', () => this.discoverNativeTextTracks());
+    }
 
     // Timeline seeking & pulling (drag support)
     this.timelineProgress.addEventListener('mousedown', (e) => this.onTimelineDragStart(e));
@@ -648,6 +659,12 @@ class PlayerController {
       const pct = (cur / dur) * 100;
       this.playedBar.style.width = `${pct}%`;
       this.seekThumb.style.left = `${pct}%`;
+
+      // Update subtitle overlay from active cues if active
+      if (this.activeCues.length > 0) {
+        const active = this.activeCues.find((c) => cur >= c.start && cur <= c.end);
+        this.displaySubtitle(active ? active.text : null);
+      }
 
       // Pre-resolve next item and prefetch initial 1 MB at 80% progress
       if (
@@ -991,10 +1008,36 @@ class PlayerController {
     }
   }
 
+  private discoverNativeTextTracks(): void {
+    if (!this.video.textTracks) return;
+    let added = false;
+    for (let i = 0; i < this.video.textTracks.length; i++) {
+      const trk = this.video.textTracks[i];
+      const id = `native-texttrack-${i}`;
+      if (!this.currentSubtitleTracks.some((s) => s.id === id)) {
+        const langStr = trk.language ? trk.language.toUpperCase() : '';
+        const label = trk.label || [langStr, `Subtitle ${i + 1}`].filter(Boolean).join(' ');
+        this.currentSubtitleTracks.push({
+          id,
+          name: label,
+          label: `${label} (Embedded)`,
+          srclang: trk.language || 'en',
+          provider: 'local',
+          ref: { nativeTrackIndex: String(i) },
+        });
+        added = true;
+      }
+    }
+    if (added) {
+      this.renderSubtitleTracksMenu();
+    }
+  }
+
   private async selectSubtitleTrack(trackId: string | null): Promise<void> {
     this.activeSubtitleTrackId = trackId;
 
     if (!trackId) {
+      this.activeCues = [];
       this.displaySubtitle(null);
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
@@ -1018,6 +1061,7 @@ class PlayerController {
 
     if (trackId.startsWith('mkv-sub-')) {
       // Embedded MKV subtitle track
+      this.activeCues = [];
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;
@@ -1025,9 +1069,25 @@ class PlayerController {
       if (this.currentEngine?.setSubtitleTrack) {
         await this.currentEngine.setSubtitleTrack(trackId);
       }
+    } else if (trackId.startsWith('native-texttrack-')) {
+      // Embedded native HTML5 video track (MP4/WebM)
+      this.activeCues = [];
+      const idx = parseInt(trk.ref?.nativeTrackIndex || '-1', 10);
+      if (idx >= 0 && this.video.textTracks && this.video.textTracks[idx]) {
+        for (let i = 0; i < this.video.textTracks.length; i++) {
+          this.video.textTracks[i].mode = i === idx ? 'hidden' : 'disabled';
+        }
+        const nativeTrk = this.video.textTracks[idx];
+        nativeTrk.oncuechange = () => {
+          if (this.activeSubtitleTrackId === trackId) {
+            const cue = nativeTrk.activeCues?.[0] as VTTCue;
+            this.displaySubtitle(cue ? cue.text : null);
+          }
+        };
+      }
     } else {
-      // Companion external subtitle
-      await this.loadCompanionSubtitle(trk);
+      // Companion external or uploaded subtitle
+      await this.loadExternalSubtitle(trk);
     }
 
     this.renderSubtitleTracksMenu();
@@ -1037,72 +1097,69 @@ class PlayerController {
   private async attachSubtitleFile(file: File): Promise<void> {
     try {
       const text = await file.text();
-      const lower = file.name.toLowerCase();
-      const fmt = lower.endsWith('.srt') ? 'srt' : (lower.endsWith('.ass') || lower.endsWith('.ssa')) ? 'ass' : 'vtt';
-      const trackUrl = createSubtitleTrackUrl(text, fmt);
-
-      if (this.activeSubTrack) {
-        this.activeSubTrack.remove();
-      }
-
-      const track = document.createElement('track');
-      track.kind = 'subtitles';
-      track.label = file.name;
-      track.srclang = 'en';
-      track.src = trackUrl;
-      track.default = true;
-
-      this.video.appendChild(track);
-      this.activeSubTrack = track;
-      this.video.textTracks[0].mode = 'showing';
-      this.btnCc.classList.add('active');
-
       const customId = `uploaded-${Date.now()}`;
+
+      // Persist in local provider memory
+      registerLocalFile(file);
+      this.loadedSubtitleContents.set(customId, text);
+
       const newSub: SubtitleTrackInfo = {
         id: customId,
         name: file.name,
-        label: file.name,
+        label: `${file.name} (Uploaded)`,
         srclang: 'en',
         provider: 'local',
-        ref: {},
+        ref: { localId: customId },
       };
       this.currentSubtitleTracks.push(newSub);
-      this.activeSubtitleTrackId = customId;
-      this.renderSubtitleTracksMenu();
-
+      await this.selectSubtitleTrack(customId);
       this.showAlert(`Loaded subtitles: ${file.name}`);
     } catch {
       this.showAlert('Failed to parse subtitle file.');
     }
   }
 
-  private async loadCompanionSubtitle(subTrack: SubtitleTrackInfo): Promise<void> {
+  private async loadExternalSubtitle(subTrack: SubtitleTrackInfo): Promise<void> {
     try {
-      const provider = PROVIDERS.find((p) => p.id === subTrack.provider);
-      if (!provider) return;
+      let text = this.loadedSubtitleContents.get(subTrack.id);
 
-      const subSource = await provider.open({
-        id: subTrack.id,
-        name: subTrack.name,
-        size: 0,
-        provider: subTrack.provider,
-        ref: subTrack.ref,
-      });
+      if (!text) {
+        const provider = PROVIDERS.find((p) => p.id === subTrack.provider);
+        if (!provider) return;
 
-      const maxLen = subSource.size > 0 ? subSource.size - 1 : 2 * 1024 * 1024;
-      const stream = await subSource.read(0, maxLen);
-      const bytes = await readAll(stream);
-      const text = new TextDecoder('utf-8').decode(bytes);
+        const subSource = await provider.open({
+          id: subTrack.id,
+          name: subTrack.name,
+          size: 0,
+          provider: subTrack.provider,
+          ref: subTrack.ref,
+        });
+
+        const maxLen = subSource.size > 0 ? subSource.size - 1 : 2 * 1024 * 1024;
+        const stream = await subSource.read(0, maxLen);
+        const bytes = await readAll(stream);
+        text = new TextDecoder('utf-8').decode(bytes);
+        this.loadedSubtitleContents.set(subTrack.id, text);
+      }
 
       const lower = subTrack.name.toLowerCase();
       const fmt = lower.endsWith('.srt') ? 'srt' : (lower.endsWith('.ass') || lower.endsWith('.ssa')) ? 'ass' : 'vtt';
-      const trackUrl = createSubtitleTrackUrl(text, fmt);
 
+      // Parse cues for high-performance direct on-screen overlay
+      this.activeCues = parseSubtitlesToCues(text, fmt);
+
+      // Check if cue matches current playback time immediately
+      const ct = this.video.currentTime;
+      const active = this.activeCues.find((c) => ct >= c.start && ct <= c.end);
+      this.displaySubtitle(active ? active.text : null);
+
+      // Also attach native <track>
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;
       }
 
+      const trackUrl = createSubtitleTrackUrl(text, fmt);
       const track = document.createElement('track');
       track.kind = 'subtitles';
       track.label = subTrack.label || subTrack.name;
@@ -1112,12 +1169,12 @@ class PlayerController {
 
       this.video.appendChild(track);
       this.activeSubTrack = track;
-      if (this.video.textTracks && this.video.textTracks.length > 0) {
-        this.video.textTracks[0].mode = 'showing';
+      if (track.track) {
+        track.track.mode = 'hidden';
       }
       this.btnCc.classList.add('active');
     } catch (e) {
-      console.warn('Failed to auto-load companion subtitle:', e);
+      console.warn('Failed to auto-load subtitle:', e);
     }
   }
 

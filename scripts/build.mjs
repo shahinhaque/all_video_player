@@ -88,6 +88,7 @@ async function buildTarget(target) {
     logLevel: 'warning',
     legalComments: 'none',
     metafile: true,
+    external: ['@audio/decode-eac3'],
   };
   const configs = [
     // Classic scripts: SW / event page and content script must not be ES modules.

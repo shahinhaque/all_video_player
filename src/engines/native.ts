@@ -67,12 +67,14 @@ export class NativeEngine implements PlaybackEngine {
     this.video.load();
 
     this.video.addEventListener('timeupdate', () => {
-      if (this.activeSubtitleTrackId && this.subtitleCues.length > 0) {
-        const ct = this.video.currentTime;
-        const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
-        this.host.onSubtitleText?.(active ? active.text : null);
-      } else {
-        this.host.onSubtitleText?.(null);
+      if (this.activeSubtitleTrackId) {
+        if (this.subtitleCues.length > 0) {
+          const ct = this.video.currentTime;
+          const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
+          this.host.onSubtitleText?.(active ? active.text : null);
+        } else {
+          this.host.onSubtitleText?.(null);
+        }
       }
     }, { signal: this.abortCtrl.signal });
 
