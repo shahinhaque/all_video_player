@@ -1,7 +1,7 @@
 // CloudPlay build script — esbuild only, no framework.
 // Usage: node scripts/build.mjs [--chrome|--firefox] [--watch]
 import * as esbuild from 'esbuild';
-import { mkdir, rm, cp, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, rm, readdir, copyFile, writeFile, readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,21 @@ const CONTENT_MATCHES = [
   'https://*.sharepoint.com/*',
 ];
 
+async function copyDir(src, dest) {
+  await mkdir(dest, { recursive: true });
+  const entries = await readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === '_locales') continue;
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await copyDir(srcPath, destPath);
+    } else {
+      await copyFile(srcPath, destPath);
+    }
+  }
+}
+
 function manifest(target) {
   const icons = { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' };
   const basePermissions = [
@@ -44,13 +59,12 @@ function manifest(target) {
 
   const m = {
     manifest_version: 3,
-    default_locale: 'en',
-    name: '__MSG_appName__',
-    short_name: '__MSG_appShortName__',
+    name: 'CloudPlay – Cloud Video Player',
+    short_name: 'CloudPlay',
     version: pkg.version,
-    description: '__MSG_appDesc__',
+    description: 'Stream TS, MP4, MKV, HLS & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.',
     icons,
-    action: { default_popup: 'popup.html', default_icon: icons, default_title: '__MSG_actionTitle__' },
+    action: { default_popup: 'popup.html', default_icon: icons, default_title: 'CloudPlay' },
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions,
     host_permissions: HOSTS,
@@ -109,10 +123,9 @@ async function buildTarget(target) {
     },
   ];
 
-  await cp(path.join(root, 'src', 'static'), outdir, { recursive: true });
-  await writeFile(path.join(outdir, 'manifest.json'), JSON.stringify(manifest(target), null, 2));
-
   if (watch) {
+    await copyDir(path.join(root, 'src', 'static'), outdir);
+    await writeFile(path.join(outdir, 'manifest.json'), JSON.stringify(manifest(target), null, 2));
     for (const c of configs) {
       const ctx = await esbuild.context(c);
       await ctx.watch();
@@ -123,6 +136,11 @@ async function buildTarget(target) {
 
   const metas = [];
   for (const c of configs) metas.push((await esbuild.build(c)).metafile);
+
+  // Copy static files and manifest AFTER esbuild completes so assets are never cleared
+  await copyDir(path.join(root, 'src', 'static'), outdir);
+  await writeFile(path.join(outdir, 'manifest.json'), JSON.stringify(manifest(target), null, 2));
+
   return report(target, outdir, metas);
 }
 
