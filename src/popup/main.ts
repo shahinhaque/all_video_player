@@ -67,7 +67,21 @@ async function launchStream(rawUrl: string) {
   } catch {}
 
   const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(url)}`);
-  await ext.tabs.create({ url: playerUrl });
+  try {
+    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
+    const currentTab = tabs && tabs[0];
+    if (currentTab?.windowId !== undefined) {
+      await ext.tabs.create({
+        url: playerUrl,
+        windowId: currentTab.windowId,
+        index: (currentTab.index ?? 0) + 1,
+      });
+    } else {
+      await ext.tabs.create({ url: playerUrl });
+    }
+  } catch {
+    await ext.tabs.create({ url: playerUrl });
+  }
   window.close();
 }
 

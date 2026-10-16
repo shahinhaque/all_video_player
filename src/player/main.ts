@@ -193,6 +193,11 @@ class PlayerController {
       this.currentEngine = null;
     }
 
+    if (item.provider === 'youtube') {
+      this.activateYouTubePreview(item);
+      return;
+    }
+
     try {
       let source: RangeByteSource;
       if (this.prefetchedNext && this.prefetchedNext.itemId === item.id) {
@@ -305,6 +310,26 @@ class PlayerController {
     this.drivePreviewFrame.src = `https://drive.google.com/file/d/${fileId}/preview`;
     this.codecPill.hidden = false;
     this.codecPill.textContent = 'DRIVE STREAM (MKV)';
+    this.showBuffering(false);
+  }
+
+  private activateYouTubePreview(item: MediaItem): void {
+    if (this.currentEngine) {
+      this.currentEngine.destroy();
+      this.currentEngine = null;
+    }
+    this.video.pause();
+    this.video.hidden = true;
+    this.drivePreviewFrame.hidden = false;
+    const videoId = item.ref?.videoId;
+    const embedUrl = item.ref?.embedUrl || `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1`;
+    this.drivePreviewFrame.src = embedUrl;
+    this.codecPill.hidden = false;
+    this.codecPill.textContent = 'YOUTUBE';
+    this.timeCurrent.textContent = '0:00';
+    this.timeDuration.textContent = 'YouTube';
+    this.playedBar.style.width = '0%';
+    this.seekThumb.style.left = '0%';
     this.showBuffering(false);
   }
 

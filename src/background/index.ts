@@ -5,143 +5,170 @@ async function setupDeclarativeRules() {
   const dnr = (globalThis as any).chrome?.declarativeNetRequest || (globalThis as any).browser?.declarativeNetRequest;
   if (!dnr?.updateDynamicRules) return;
 
-  try {
-    if (dnr.getDynamicRules) {
-      const existing = await dnr.getDynamicRules();
-      if (existing && existing.length >= 6) {
-        return;
-      }
-    }
-  } catch {}
+  const extId = (globalThis as any).chrome?.runtime?.id || (globalThis as any).browser?.runtime?.id || ext.runtime?.id;
+  const initiatorDomains = extId ? [extId] : undefined;
 
-  dnr.updateDynamicRules({
-    removeRuleIds: [1000, 1001, 1002, 1003, 1004, 1005],
-    addRules: [
-      {
-        id: 1000,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-            { header: 'Access-Control-Allow-Headers', operation: 'set', value: 'Range, Accept-Ranges, Content-Type, Authorization' },
-            { header: 'Access-Control-Expose-Headers', operation: 'set', value: 'Content-Range, Content-Length, Accept-Ranges' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-          ],
-        },
-        condition: {
-          urlFilter: '*',
-          resourceTypes: ['media', 'xmlhttprequest'],
-        },
+  const rules: any[] = [
+    {
+      id: 1000,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+          { header: 'Access-Control-Allow-Headers', operation: 'Range, Accept-Ranges, Content-Type, Authorization' },
+          { header: 'Access-Control-Expose-Headers', operation: 'Content-Range, Content-Length, Accept-Ranges' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+        ],
       },
-      {
-        id: 1001,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-            { header: 'Access-Control-Allow-Headers', operation: 'set', value: 'Range, Accept-Ranges, Content-Type, Authorization' },
-            { header: 'Access-Control-Expose-Headers', operation: 'set', value: 'Content-Range, Content-Length, Accept-Ranges' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-            { header: 'Content-Disposition', operation: 'remove' },
-            { header: 'X-Frame-Options', operation: 'remove' },
-          ],
-        },
-        condition: {
-          urlFilter: '*://*.googleusercontent.com/*',
-          resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
-        },
+      condition: {
+        urlFilter: '*',
+        resourceTypes: ['media', 'xmlhttprequest'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
       },
-      {
-        id: 1002,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-            { header: 'Content-Disposition', operation: 'remove' },
-            { header: 'X-Frame-Options', operation: 'remove' },
-            { header: 'Content-Security-Policy', operation: 'remove' },
-          ],
-        },
-        condition: {
-          urlFilter: '*://drive.google.com/*',
-          resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
-        },
+    },
+    {
+      id: 1001,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+          { header: 'Access-Control-Allow-Headers', operation: 'Range, Accept-Ranges, Content-Type, Authorization' },
+          { header: 'Access-Control-Expose-Headers', operation: 'Content-Range, Content-Length, Accept-Ranges' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          { header: 'Content-Disposition', operation: 'remove' },
+          { header: 'X-Frame-Options', operation: 'remove' },
+        ],
       },
-      {
-        id: 1003,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
-            { header: 'Access-Control-Allow-Headers', operation: 'set', value: 'Range, Accept-Ranges, Content-Type' },
-            { header: 'Access-Control-Expose-Headers', operation: 'set', value: 'Content-Range, Content-Length, Accept-Ranges' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-          ],
-        },
-        condition: {
-          urlFilter: '*://*.userstorage.mega.co.nz/*',
-          resourceTypes: ['media', 'xmlhttprequest'],
-        },
+      condition: {
+        urlFilter: '*://*.googleusercontent.com/*',
+        resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
       },
-      {
-        id: 1004,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-          ],
-        },
-        condition: {
-          urlFilter: '*://*.mega.co.nz/*',
-          resourceTypes: ['media', 'xmlhttprequest'],
-        },
+    },
+    {
+      id: 1002,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+          { header: 'Content-Disposition', operation: 'remove' },
+          { header: 'X-Frame-Options', operation: 'remove' },
+          { header: 'Content-Security-Policy', operation: 'remove' },
+        ],
       },
-      {
-        id: 1005,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          responseHeaders: [
-            { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
-            { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
-          ],
-        },
-        condition: {
-          urlFilter: '*://*.mega.nz/*',
-          resourceTypes: ['media', 'xmlhttprequest'],
-        },
+      condition: {
+        urlFilter: '*://drive.google.com/*',
+        resourceTypes: ['media', 'xmlhttprequest', 'sub_frame'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
       },
-    ],
-  }).catch(() => {});
+    },
+    {
+      id: 1003,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, HEAD, OPTIONS' },
+          { header: 'Access-Control-Allow-Headers', operation: 'Range, Accept-Ranges, Content-Type' },
+          { header: 'Access-Control-Expose-Headers', operation: 'Content-Range, Content-Length, Accept-Ranges' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+        ],
+      },
+      condition: {
+        urlFilter: '*://*.userstorage.mega.co.nz/*',
+        resourceTypes: ['media', 'xmlhttprequest'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
+      },
+    },
+    {
+      id: 1004,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+        ],
+      },
+      condition: {
+        urlFilter: '*://*.mega.co.nz/*',
+        resourceTypes: ['media', 'xmlhttprequest'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
+      },
+    },
+    {
+      id: 1005,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+          { header: 'Cross-Origin-Resource-Policy', operation: 'set', value: 'cross-origin' },
+        ],
+      },
+      condition: {
+        urlFilter: '*://*.mega.nz/*',
+        resourceTypes: ['media', 'xmlhttprequest'],
+        ...(initiatorDomains ? { initiatorDomains } : {}),
+      },
+    },
+  ];
+
+  try {
+    await dnr.updateDynamicRules({
+      removeRuleIds: [1000, 1001, 1002, 1003, 1004, 1005],
+      addRules: rules,
+    });
+  } catch (err) {
+    console.warn('Declarative rules setup error:', err);
+  }
 }
 
-// Setup Context Menus and Declarative Rules
+// Setup Context Menus with persistence across service worker restarts
 function setupContextMenu() {
+  const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
+  const menuConfig = {
+    id: 'cloudplay-open-link',
+    title,
+    contexts: ['all'],
+  };
+
+  const rawChrome = getRawChrome();
+  const rawBrowser = getRawBrowser();
+  const api = rawChrome?.contextMenus || rawBrowser?.contextMenus || ext.contextMenus;
+  if (!api?.create) return;
+
   try {
-    ext.contextMenus?.removeAll(() => {
-      const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
-      ext.contextMenus?.create({
-        id: 'cloudplay-open-link',
-        title,
-        contexts: ['all'],
-      });
+    api.create(menuConfig, () => {
+      const lastErr = rawChrome?.runtime?.lastError || rawBrowser?.runtime?.lastError;
+      if (lastErr && api.update) {
+        api.update('cloudplay-open-link', { title }, () => {
+          const _ = rawChrome?.runtime?.lastError;
+        });
+      }
     });
   } catch {}
 }
 
 ext.runtime.onInstalled?.addListener(() => {
-  setupContextMenu();
+  const rawChrome = getRawChrome();
+  const rawBrowser = getRawBrowser();
+  const api = rawChrome?.contextMenus || rawBrowser?.contextMenus || ext.contextMenus;
+  try {
+    api?.removeAll?.(() => {
+      setupContextMenu();
+    });
+  } catch {
+    setupContextMenu();
+  }
   setupDeclarativeRules();
   setupFirefoxWebRequest();
 });
@@ -154,8 +181,25 @@ function setupFirefoxWebRequest() {
   if (!browserApi?.webRequest?.onHeadersReceived) return;
 
   try {
+    const extPrefix = ext.runtime?.getURL ? ext.runtime.getURL('') : '';
     browserApi.webRequest.onHeadersReceived.addListener(
       (details: any) => {
+        const origin = details.originUrl || details.documentUrl || '';
+        const url = details.url || '';
+
+        // Only modify headers for requests initiated by our extension player, or for targeted cloud stream CDNs
+        const isFromExtension = extPrefix && origin.startsWith(extPrefix);
+        const isCloudMedia =
+          url.includes('googleusercontent.com') ||
+          url.includes('drive.google.com') ||
+          url.includes('userstorage.mega.co.nz') ||
+          url.includes('mega.nz') ||
+          url.includes('mega.co.nz');
+
+        if (!isFromExtension && !isCloudMedia) {
+          return undefined; // Do not touch normal websites like YouTube, Twitter, etc.
+        }
+
         const headers = details.responseHeaders || [];
         const setHeader = (name: string, value: string) => {
           const idx = headers.findIndex((h: any) => h.name.toLowerCase() === name.toLowerCase());
@@ -187,7 +231,14 @@ ext.contextMenus?.onClicked.addListener((info: any, tab: any) => {
     lastRightClickedUrl = null;
     if (targetUrl) {
       const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(targetUrl)}`);
-      ext.tabs.create({ url: playerUrl, index: (tab?.index ?? 0) + 1 });
+      const createOptions: any = {
+        url: playerUrl,
+        index: (tab?.index ?? 0) + 1,
+      };
+      if (tab?.windowId !== undefined) {
+        createOptions.windowId = tab.windowId;
+      }
+      ext.tabs.create(createOptions);
     }
   }
 });
@@ -207,7 +258,15 @@ msgTarget.runtime.onMessage?.addListener((message: any, sender: any, sendRespons
 
   if (message?.type === 'OPEN_PLAYER' && message?.url) {
     const playerUrl = ext.runtime.getURL(`player.html?url=${encodeURIComponent(message.url)}`);
-    ext.tabs.create({ url: playerUrl, index: (sender.tab?.index ?? 0) + 1 });
+    const winId = sender.tab?.windowId;
+    const createOptions: any = {
+      url: playerUrl,
+      index: (sender.tab?.index ?? 0) + 1,
+    };
+    if (winId !== undefined) {
+      createOptions.windowId = winId;
+    }
+    ext.tabs.create(createOptions);
     sendResponse({ ok: true });
     return isFirefox ? Promise.resolve({ ok: true }) : true;
   }

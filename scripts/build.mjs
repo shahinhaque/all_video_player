@@ -27,6 +27,8 @@ const CONTENT_MATCHES = [
   'https://drive.google.com/*',
   'https://onedrive.live.com/*',
   'https://*.sharepoint.com/*',
+  'https://*.youtube.com/*',
+  'https://youtube.com/*',
 ];
 
 async function copyDir(src, dest) {
@@ -72,9 +74,11 @@ function manifest(target) {
   };
   if (target === 'chrome') {
     m.background = { service_worker: 'background.js' };
+    m.incognito = 'split';
     m.minimum_chrome_version = '110';
   } else {
     m.background = { scripts: ['background.js'] };
+    m.incognito = 'spanning';
     m.browser_specific_settings = { gecko: { id: 'cloudplay@itmagnet.com.au', strict_min_version: '115.0' } };
     m.optional_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];
     m.optional_host_permissions = ['<all_urls>', '*://*/*', 'http://*/*', 'https://*/*'];

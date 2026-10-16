@@ -1,6 +1,6 @@
 /** Shared domain types. Every provider and engine is written against these contracts. */
 
-export type ProviderId = 'gdrive' | 'onedrive' | 'mega' | 'http' | 'local';
+export type ProviderId = 'gdrive' | 'onedrive' | 'mega' | 'http' | 'local' | 'youtube';
 
 export interface SubtitleTrackInfo {
   id: string;

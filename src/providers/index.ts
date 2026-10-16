@@ -5,11 +5,13 @@ import { OneDriveProvider } from './onedrive.js';
 import { MegaProvider } from './mega.js';
 import { LocalProvider } from './local.js';
 import { DirectProvider } from './direct.js';
+import { YouTubeProvider } from './youtube.js';
 
 export const PROVIDERS: SourceProvider[] = [
   new MegaProvider(),
   new GDriveProvider(),
   new OneDriveProvider(),
+  new YouTubeProvider(),
   new LocalProvider(),
   new DirectProvider(),
 ];

@@ -209,5 +209,45 @@ describe('Provider URL Matchers & Parsers', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('correctly identifies and resolves YouTube URLs and prevents DirectProvider hijacking', async () => {
+    const { YouTubeProvider, extractYouTubeInfo } = await import('../src/providers/youtube.js');
+    const { DirectProvider } = await import('../src/providers/direct.js');
+    const yt = new YouTubeProvider();
+    const direct = new DirectProvider();
+
+    const watchUrl = new URL('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    const youtuBeUrl = new URL('https://youtu.be/dQw4w9WgXcQ');
+    const shortsUrl = new URL('https://www.youtube.com/shorts/dQw4w9WgXcQ');
+    const embedUrl = new URL('https://www.youtube.com/embed/dQw4w9WgXcQ');
+    const playlistUrl = new URL('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL12345');
+
+    // YouTubeProvider matches all variations
+    expect(yt.canHandle(watchUrl)).toBe(true);
+    expect(yt.canHandle(youtuBeUrl)).toBe(true);
+    expect(yt.canHandle(shortsUrl)).toBe(true);
+    expect(yt.canHandle(embedUrl)).toBe(true);
+    expect(yt.canHandle(playlistUrl)).toBe(true);
+
+    // DirectProvider MUST NOT claim any YouTube URLs
+    expect(direct.canHandle(watchUrl)).toBe(false);
+    expect(direct.canHandle(youtuBeUrl)).toBe(false);
+    expect(direct.canHandle(shortsUrl)).toBe(false);
+    expect(direct.canHandle(embedUrl)).toBe(false);
+
+    // Extract info checks
+    expect(extractYouTubeInfo(watchUrl)).toEqual({ videoId: 'dQw4w9WgXcQ', playlistId: null });
+    expect(extractYouTubeInfo(youtuBeUrl)).toEqual({ videoId: 'dQw4w9WgXcQ', playlistId: null });
+    expect(extractYouTubeInfo(shortsUrl)).toEqual({ videoId: 'dQw4w9WgXcQ', playlistId: null });
+    expect(extractYouTubeInfo(playlistUrl)).toEqual({ videoId: 'dQw4w9WgXcQ', playlistId: 'PL12345' });
+
+    // Resolves to playlist with embed URL and YouTube provider
+    const resolved = await yt.resolve(watchUrl);
+    expect(resolved.items).toHaveLength(1);
+    expect(resolved.items[0].provider).toBe('youtube');
+    expect(resolved.items[0].mime).toBe('video/youtube');
+    expect(resolved.items[0].ref.videoId).toBe('dQw4w9WgXcQ');
+    expect(resolved.items[0].ref.embedUrl).toContain('dQw4w9WgXcQ');
+  });
 });
 

@@ -194,11 +194,24 @@ export class DirectProvider implements SourceProvider {
   canHandle(url: URL): boolean {
     const proto = url.protocol.toLowerCase();
     if (proto !== 'http:' && proto !== 'https:' && proto !== 'sftp:') return false;
+    const host = url.hostname.toLowerCase();
+    if (
+      host.includes('youtube.com') ||
+      host.includes('youtu.be') ||
+      host.includes('youtube-nocookie.com') ||
+      host.includes('mega.nz') ||
+      host.includes('mega.co.nz') ||
+      host.includes('drive.google.com') ||
+      host.includes('live.com') ||
+      host.includes('sharepoint.com') ||
+      host.includes('1drv.ms')
+    ) {
+      return false;
+    }
     const path = url.pathname.toLowerCase();
     return (
       isVideoName(path) ||
       path.endsWith('/') ||
-      !path.includes('.') ||
       url.searchParams.get('type') === 'video' ||
       proto === 'sftp:'
     );
