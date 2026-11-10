@@ -55,7 +55,13 @@ export class Eac3AudioPlayer {
   updateVolume(): void {
     if (!this.gainNode || !this.audioCtx) return;
     const vol = this.video.muted ? 0 : (this.video.volume !== undefined ? this.video.volume : 1.0);
-    this.gainNode.gain.setValueAtTime(vol, this.audioCtx.currentTime);
+    try {
+      this.gainNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
+      this.gainNode.gain.value = vol;
+      this.gainNode.gain.setValueAtTime(vol, this.audioCtx.currentTime);
+    } catch {
+      this.gainNode.gain.value = vol;
+    }
   }
 
   pushAudioFrame(timestampSec: number, data: Uint8Array): void {
@@ -99,6 +105,7 @@ export class Eac3AudioPlayer {
 
   scheduleUpcomingChunks(): void {
     if (!this.audioCtx || !this.gainNode || this.isDestroyed) return;
+    this.updateVolume();
     if (this.video.paused || this.video.seeking) return;
 
     const currentVTime = this.video.currentTime;

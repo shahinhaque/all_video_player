@@ -20,6 +20,20 @@ export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
     return { container: 'ts', mime: 'video/mp2t' };
   }
 
+  // If unencrypted direct URL already has a clear file extension, avoid an extra network probe request
+  if (!src.encrypted && src.directUrl) {
+    const lowerDirect = (src.name || '').toLowerCase();
+    if (lowerDirect.endsWith('.mkv') || src.mime?.includes('matroska')) {
+      return { container: 'mkv', mime: 'video/x-matroska' };
+    }
+    if (lowerDirect.endsWith('.webm') || src.mime?.includes('webm')) {
+      return { container: 'webm', mime: 'video/webm' };
+    }
+    if (lowerDirect.endsWith('.mp4') || lowerDirect.endsWith('.m4v') || lowerDirect.endsWith('.mov')) {
+      return { container: 'mp4', mime: 'video/mp4' };
+    }
+  }
+
   try {
     // Read the first 1024 bytes to inspect magic headers
     const probeLen = Math.min(1024, src.size > 0 ? src.size - 1 : 1023);
@@ -90,7 +104,13 @@ export async function sniffMedia(src: RangeByteSource): Promise<SniffResult> {
   }
 
   // Fallback to name or mime
+  const lowerName = (src.name || '').toLowerCase();
+  if (lowerName.endsWith('.mkv') || src.mime?.includes('matroska')) {
+    return { container: 'mkv', mime: 'video/x-matroska' };
+  }
+  if (lowerName.endsWith('.webm') || src.mime?.includes('webm')) {
+    return { container: 'webm', mime: 'video/webm' };
+  }
   if (src.mime?.includes('mp4')) return { container: 'mp4', mime: 'video/mp4' };
-  if (src.mime?.includes('webm')) return { container: 'webm', mime: 'video/webm' };
   return { container: 'mp4', mime: src.mime || 'video/mp4' };
 }

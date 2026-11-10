@@ -39,7 +39,18 @@ export async function createPlaybackEngine(
     };
   }
 
-  // If container is MKV in a browser without native Matroska support (Chromium)
+  // Direct container (MP4, WebM, MKV, etc.) with direct HTTP/Blob URL
+  // Chromium natively demuxes MP4, WebM, and Matroska (.mkv) via <video src>,
+  // while NativeEngine handles multi-audio (WASM E-AC-3/AC-3 5.1) and embedded MKV subtitles.
+  if (src.directUrl) {
+    const effectiveSrc = sniff.container === 'mkv' ? { ...src, mime: 'video/x-matroska' } : src;
+    return {
+      engine: new NativeEngine(video, effectiveSrc, host),
+      container: sniff.container.toUpperCase(),
+    };
+  }
+
+  // If container is MKV without a direct URL and without native Matroska support
   if (sniff.container === 'mkv') {
     const canPlayMkv = typeof video.canPlayType === 'function' && !!video.canPlayType('video/x-matroska');
     if (!canPlayMkv) {
@@ -49,14 +60,6 @@ export async function createPlaybackEngine(
         container: 'MKV',
       };
     }
-  }
-
-  // Direct container (MP4, WebM, MKV, etc.) with direct HTTP URL
-  if (src.directUrl) {
-    return {
-      engine: new NativeEngine(video, src, host),
-      container: sniff.container.toUpperCase(),
-    };
   }
 
   // Encrypted non-TS media (e.g. MP4, WebM, MKV on MEGA)

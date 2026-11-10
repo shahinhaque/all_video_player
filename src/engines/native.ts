@@ -13,6 +13,8 @@ export class NativeEngine implements PlaybackEngine {
 
   private mkvDemuxer: MkvDemuxer | null = null;
   private eac3Player: Eac3AudioPlayer | null = null;
+  private fallbackEngine: PlaybackEngine | null = null;
+  private isSwitchingToFallback = false;
   private audioTracks: AudioTrackInfo[] = [];
   private subtitleTracks: SubtitleTrackInfo[] = [];
   private activeAudioTrackId: string | null = null;
@@ -28,8 +30,21 @@ export class NativeEngine implements PlaybackEngine {
   }
 
   async attach(startTime: number = 0): Promise<void> {
+    const name = this.src.name?.toLowerCase() || '';
+    const isMkv = name.endsWith('.mkv') || (this.src.mime || '').includes('matroska');
+
     if (this.src.directUrl) {
-      this.video.src = this.src.directUrl;
+      let playUrl = this.src.directUrl;
+      if (isMkv) {
+        try {
+          const u = new URL(playUrl);
+          if ((u.protocol === 'http:' || u.protocol === 'https:') && !u.search && u.pathname.toLowerCase().endsWith('.mkv')) {
+            u.search = '?_cp=1.vtt';
+            playUrl = u.href;
+          }
+        } catch {}
+      }
+      this.video.src = playUrl;
     } else {
       throw new PlayerError(
         'unsupported',
@@ -39,16 +54,9 @@ export class NativeEngine implements PlaybackEngine {
 
     this.video.addEventListener('error', () => {
       const err = this.video.error;
-      if (!err || this.isDestroyed) return;
-      const name = this.src.name?.toLowerCase() || '';
-      const isMkv = name.endsWith('.mkv') || this.src.mime?.includes('matroska');
-      if (err.code === 4 && isMkv) {
-        this.host.fail(
-          new PlayerError(
-            'codec',
-            'Chromium does not support native Matroska (.mkv) container decoding. Open in Firefox or stream MP4/TS.'
-          )
-        );
+      if (!err || this.isDestroyed || this.fallbackEngine || this.isSwitchingToFallback) return;
+      if (isMkv) {
+        void this.switchToMkvEngine(this.video.currentTime || startTime);
         return;
       }
       this.host.fail(
@@ -61,12 +69,11 @@ export class NativeEngine implements PlaybackEngine {
         this.video.currentTime = startTime;
         this.video.removeEventListener('loadedmetadata', onLoaded);
       };
-      this.video.addEventListener('loadedmetadata', onLoaded);
+      this.video.addEventListener('loadedmetadata', onLoaded, { signal: this.abortCtrl.signal });
     }
 
-    this.video.load();
-
     this.video.addEventListener('timeupdate', () => {
+      if (this.fallbackEngine) return;
       if (this.activeSubtitleTrackId) {
         if (this.subtitleCues.length > 0) {
           const ct = this.video.currentTime;
@@ -78,19 +85,63 @@ export class NativeEngine implements PlaybackEngine {
       }
     }, { signal: this.abortCtrl.signal });
 
-    // If file is an MKV, initialize MkvDemuxer to inspect and handle multi-audio and subtitles
-    const isMkv = (this.src.name || '').toLowerCase().endsWith('.mkv') || (this.src.mime || '').includes('matroska');
+    this.video.addEventListener('seeking', () => {
+      if (this.fallbackEngine || !this.mkvDemuxer) return;
+      this.mkvDemuxer.seek(this.video.currentTime || 0);
+    }, { signal: this.abortCtrl.signal });
+
+    // If file is an MKV, wait until metadata is loaded so <video> gets priority on the HTTP connection
     if (isMkv) {
-      this.initMkvDemuxing(startTime);
+      const onMeta = () => {
+        this.video.removeEventListener('loadedmetadata', onMeta);
+        if (!this.isDestroyed && !this.fallbackEngine && !this.isSwitchingToFallback) {
+          void this.initMkvDemuxing(startTime);
+        }
+      };
+      this.video.addEventListener('loadedmetadata', onMeta, { signal: this.abortCtrl.signal });
+    }
+  }
+
+  private async switchToMkvEngine(startTime: number): Promise<void> {
+    if (this.isDestroyed || this.fallbackEngine || this.isSwitchingToFallback) return;
+    this.isSwitchingToFallback = true;
+
+    // Clean up native MKV demuxer / audio before handing over to MkvEngine
+    this.abortCtrl.abort();
+    this.abortCtrl = new AbortController();
+    if (this.eac3Player) {
+      this.eac3Player.destroy();
+      this.eac3Player = null;
+    }
+    if (this.mkvDemuxer) {
+      this.mkvDemuxer.destroy();
+      this.mkvDemuxer = null;
+    }
+
+    try {
+      const { MkvEngine } = await import('./mkv.js');
+      if (this.isDestroyed) return;
+      this.fallbackEngine = new MkvEngine(this.video, this.src, this.host);
+      await this.fallbackEngine.attach(startTime);
+      if (!this.isDestroyed) {
+        this.video.play().catch(() => {});
+      }
+    } catch (err) {
+      if (!this.isDestroyed) {
+        this.host.fail(err);
+      }
+    } finally {
+      this.isSwitchingToFallback = false;
     }
   }
 
   private async initMkvDemuxing(startTime: number): Promise<void> {
     try {
       const { MkvDemuxer } = await import('./mkv-demuxer.js');
+      if (this.isDestroyed || this.fallbackEngine) return;
       this.mkvDemuxer = new MkvDemuxer(this.src);
       const info = await this.mkvDemuxer.parseHeaders();
-      if (!info || this.isDestroyed) return;
+      if (!info || this.isDestroyed || this.fallbackEngine) return;
 
       const audioTrks = info.tracks.filter((t) => t.trackType === 'audio');
       const subTrks = info.tracks.filter((t) => t.trackType === 'subtitle');
@@ -121,7 +172,7 @@ export class NativeEngine implements PlaybackEngine {
       }));
 
       // Pick default or first audio track
-      let chosenAudio = this.audioTracks.find((t) => t.isDefault) || this.audioTracks[0];
+      const chosenAudio = this.audioTracks.find((t) => t.isDefault) || this.audioTracks[0];
       if (chosenAudio) {
         this.activeAudioTrackId = chosenAudio.id;
         this.host.onAudioTracksDiscovered?.(this.audioTracks, chosenAudio.id);
@@ -132,15 +183,14 @@ export class NativeEngine implements PlaybackEngine {
         const defSub = this.subtitleTracks.find((s) => s.isDefault) || this.subtitleTracks[0];
         this.host.onSubtitleTracksDiscovered?.(this.subtitleTracks, defSub?.id);
         if (defSub) {
-          this.setSubtitleTrack(defSub.id);
+          await this.setSubtitleTrack(defSub.id);
         }
       }
 
-      // Start background reading loop
       if (startTime > 0) {
         this.mkvDemuxer.seek(startTime);
       }
-      this.startDemuxLoop();
+      void this.startDemuxLoop();
     } catch (e) {
       console.warn('Failed to initialize MKV demuxer:', e);
     }
@@ -207,16 +257,37 @@ export class NativeEngine implements PlaybackEngine {
     this.isDemuxingLoopRunning = true;
 
     let prebufferCount = 0;
-    while (!this.isDestroyed && !this.abortCtrl.signal.aborted) {
-      if (this.video.paused && !this.video.seeking && prebufferCount >= 6) {
-        await new Promise((r) => setTimeout(r, 200));
+    let needsBurst = true;
+    while (!this.isDestroyed && !this.abortCtrl.signal.aborted && !this.fallbackEngine) {
+      const needsAudio = !!this.eac3Player;
+      const needsSubs = !!this.activeSubtitleTrackId;
+      if (!needsAudio && !needsSubs) {
+        await new Promise((r) => setTimeout(r, 300));
         continue;
       }
 
-      const hasMore = await this.mkvDemuxer.readNextChunk(512 * 1024);
+      if (this.video.paused && !this.video.seeking && prebufferCount >= 4) {
+        await new Promise((r) => setTimeout(r, 250));
+        continue;
+      }
+
+      // Buffer in bursts (up to 35s ahead, then sleep until within 15s) to minimize network request frequency
+      const curTime = this.video.currentTime || 0;
+      if (this.video.seeking || this.mkvDemuxer.lastTimeSec < curTime + 15) {
+        needsBurst = true;
+      } else if (this.mkvDemuxer.lastTimeSec > curTime + 35) {
+        needsBurst = false;
+      }
+
+      if (!needsBurst && !this.video.seeking) {
+        await new Promise((r) => setTimeout(r, 350));
+        continue;
+      }
+
+      const hasMore = await this.mkvDemuxer.readNextChunk(1024 * 1024);
       prebufferCount++;
       if (!hasMore) {
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 400));
       }
     }
 
@@ -224,22 +295,42 @@ export class NativeEngine implements PlaybackEngine {
   }
 
   getAudioTracks(): AudioTrackInfo[] {
+    if (this.fallbackEngine?.getAudioTracks) {
+      return this.fallbackEngine.getAudioTracks();
+    }
     return this.audioTracks;
   }
 
   async setAudioTrack(trackId: string): Promise<void> {
+    if (this.fallbackEngine?.setAudioTrack) {
+      await this.fallbackEngine.setAudioTrack(trackId);
+      return;
+    }
     await this.setupAudioTrack(trackId);
+    if (this.mkvDemuxer) {
+      this.mkvDemuxer.seek(this.video.currentTime || 0);
+    }
   }
 
   getActiveAudioTrack(): string | null {
+    if (this.fallbackEngine?.getActiveAudioTrack) {
+      return this.fallbackEngine.getActiveAudioTrack();
+    }
     return this.activeAudioTrackId;
   }
 
   getSubtitleTracks(): SubtitleTrackInfo[] {
+    if (this.fallbackEngine?.getSubtitleTracks) {
+      return this.fallbackEngine.getSubtitleTracks();
+    }
     return this.subtitleTracks;
   }
 
   async setSubtitleTrack(trackId: string | null): Promise<void> {
+    if (this.fallbackEngine?.setSubtitleTrack) {
+      await this.fallbackEngine.setSubtitleTrack(trackId);
+      return;
+    }
     this.activeSubtitleTrackId = trackId;
     if (!this.mkvDemuxer) return;
 
@@ -256,19 +347,31 @@ export class NativeEngine implements PlaybackEngine {
     const match = trackId.match(/^mkv-sub-(\d+)$/);
     if (!match) return;
     const trackNum = parseInt(match[1], 10);
-    this.subtitleCues = [];
+    const cached = this.mkvDemuxer.getCuesForTrack(trackNum);
+    this.subtitleCues = cached.map((c) => ({
+      start: c.timeSec,
+      end: c.timeSec + (c.durationSec || 3.5),
+      text: c.text,
+    }));
     this.mkvDemuxer.setActiveSubtitleTrack(trackNum);
 
     if (!this.subtitleTextTrack) {
       this.subtitleTextTrack = this.video.addTextTrack('subtitles', 'Embedded Subtitles', 'en');
     }
-    this.subtitleTextTrack.mode = 'showing';
+    this.subtitleTextTrack.mode = 'hidden';
+
+    // Update current active cue on screen immediately if matching current playback time
+    const ct = this.video.currentTime;
+    const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
+    this.host.onSubtitleText?.(active ? active.text : null);
 
     this.mkvDemuxer.onSubtitleCue((cue) => {
       if (this.activeSubtitleTrackId !== trackId) return;
       const start = cue.timeSec;
-      const end = cue.timeSec + (cue.durationSec || 3.0);
-      this.subtitleCues.push({ start, end, text: cue.text });
+      const end = cue.timeSec + (cue.durationSec || 3.5);
+      if (!this.subtitleCues.some((c) => Math.abs(c.start - start) < 0.05 && c.text === cue.text)) {
+        this.subtitleCues.push({ start, end, text: cue.text });
+      }
       if (this.subtitleTextTrack) {
         try {
           const vttCue = new VTTCue(start, end, cue.text);
@@ -283,6 +386,10 @@ export class NativeEngine implements PlaybackEngine {
     this.abortCtrl.abort();
     this.host.onSubtitleText?.(null);
     this.subtitleCues = [];
+    if (this.fallbackEngine) {
+      this.fallbackEngine.destroy();
+      this.fallbackEngine = null;
+    }
     if (this.eac3Player) {
       this.eac3Player.destroy();
       this.eac3Player = null;

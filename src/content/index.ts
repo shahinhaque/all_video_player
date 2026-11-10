@@ -331,7 +331,17 @@ function injectFloatingButton(): void {
       if (isMega) {
         const currentVids = detectMegaVideosOnPage();
         toggleMegaVideoDrawer(currentVids);
-      } else if (isGDrive || isYouTube) {
+      } else if (isGDrive) {
+        let target = location.href;
+        if (!extractDriveFileId(target)) {
+          const selectedRow = document.querySelector('[aria-selected="true"][data-id], [data-id][tabindex="0"]') as HTMLElement | null;
+          const selId = selectedRow?.dataset.id || selectedRow?.getAttribute('data-id');
+          if (selId) {
+            target = `https://drive.google.com/file/d/${selId}/view`;
+          }
+        }
+        showInPageModal(target);
+      } else if (isYouTube) {
         showInPageModal(location.href);
       } else {
         ext.runtime.sendMessage({
@@ -377,8 +387,16 @@ function resolveTargetUrl(el: HTMLElement | null): string {
 
   // 1. MEGA
   if (location.hostname.includes('mega')) {
-    const row = el.closest('[data-node-id], .transfer-file-row, .grid-url-item, .files-grid-view .grid-table-row') as HTMLElement;
-    const nodeId = row?.dataset.nodeId || row?.dataset.id || row?.getAttribute('data-id') || row?.getAttribute('data-node-id');
+    const withNode =
+      (el.closest('[data-node-id], [data-id]') as HTMLElement | null) ||
+      (el
+        .closest('.transfer-file-row, .grid-url-item, .files-grid-view .grid-table-row')
+        ?.querySelector('[data-node-id], [data-id]') as HTMLElement | null);
+    const nodeId =
+      withNode?.dataset.nodeId ||
+      withNode?.dataset.id ||
+      withNode?.getAttribute('data-id') ||
+      withNode?.getAttribute('data-node-id');
     const folderInfo = getMegaFolderInfo();
     if (folderInfo && nodeId) {
       return `https://mega.nz/folder/${folderInfo.folderId}#${folderInfo.folderKey}/file/${nodeId}`;
@@ -387,16 +405,27 @@ function resolveTargetUrl(el: HTMLElement | null): string {
 
   // 2. Google Drive
   if (location.hostname.includes('drive.google.com')) {
-    const item = el.closest('[data-id], [data-target="doc"], [data-target="file"], [role="row"], [role="gridcell"]') as HTMLElement;
-    const fileId = item?.dataset.id || item?.getAttribute('data-id');
-    if (fileId) {
+    const withId =
+      (el.closest('[data-id]') as HTMLElement | null) ||
+      (el
+        .closest('[data-target="doc"], [data-target="file"], [role="row"], [role="gridcell"]')
+        ?.querySelector('[data-id]') as HTMLElement | null) ||
+      (document.querySelector('[aria-selected="true"][data-id], [aria-selected="true"] [data-id]') as HTMLElement | null);
+    const fileId = withId?.dataset.id || withId?.getAttribute('data-id');
+    if (fileId && fileId.length > 5) {
       return `https://drive.google.com/file/d/${fileId}/view`;
     }
   }
 
   // 3. YouTube
   if (location.hostname.includes('youtube.com') || location.hostname.includes('youtu.be')) {
-    const videoLink = el.closest('a[href*="/watch"], a[href*="/shorts/"], a#thumbnail') as HTMLAnchorElement;
+    const videoLink =
+      (el.closest('a[href*="/watch"], a[href*="/shorts/"], a#thumbnail') as HTMLAnchorElement | null) ||
+      (el
+        .closest(
+          'ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-playlist-panel-video-renderer, ytd-reel-item-renderer, ytm-media-item'
+        )
+        ?.querySelector('a[href*="/watch"], a[href*="/shorts/"]') as HTMLAnchorElement | null);
     if (videoLink?.href) {
       return videoLink.href;
     }
@@ -420,7 +449,23 @@ function resolveTargetUrl(el: HTMLElement | null): string {
   return location.href;
 }
 
+function findVisibleElement(selector: string): HTMLElement | null {
+  const nodes = document.querySelectorAll(selector);
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i] as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 10 && rect.height > 10) {
+      const style = window.getComputedStyle(el);
+      if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+        return el;
+      }
+    }
+  }
+  return null;
+}
+
 document.addEventListener('contextmenu', (e) => {
+  removeCompanionMenu();
   lastContextTarget = e.target as HTMLElement;
   lastTargetUrl = resolveTargetUrl(lastContextTarget);
   if (lastTargetUrl) {
@@ -429,7 +474,7 @@ document.addEventListener('contextmenu', (e) => {
     } catch {}
   }
   setTimeout(injectInPageContextMenu, 50);
-  setTimeout(injectInPageContextMenu, 200);
+  setTimeout(injectInPageContextMenu, 180);
 });
 
 function removeCompanionMenu(): void {
@@ -441,8 +486,8 @@ function injectInPageContextMenu(): void {
   // 1. Google Drive: Show docked companion bar adjacent to Google Drive's native menu
   // NEVER inject inside div[role="menu"] — Closure's internal component tree will crash on foreign nodes.
   if (location.hostname.includes('drive.google.com')) {
-    const gdriveMenu = document.querySelector('div[role="menu"]');
-    if (gdriveMenu && gdriveMenu instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+    const gdriveMenu = findVisibleElement('div[role="menu"]');
+    if (gdriveMenu && !document.getElementById('cloudplay-companion-menu')) {
       const rect = gdriveMenu.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         const companion = document.createElement('div');
@@ -481,7 +526,7 @@ function injectInPageContextMenu(): void {
           e.stopPropagation();
           e.preventDefault();
           removeCompanionMenu();
-          const url = lastTargetUrl || location.href;
+          const url = lastTargetUrl || resolveTargetUrl(lastContextTarget) || location.href;
           showInPageModal(url);
         });
 
@@ -496,7 +541,8 @@ function injectInPageContextMenu(): void {
         setTimeout(() => document.addEventListener('mousedown', dismissListener, true), 80);
 
         const checkInterval = setInterval(() => {
-          if (!document.body.contains(gdriveMenu) || gdriveMenu.offsetParent === null) {
+          const r = gdriveMenu.getBoundingClientRect();
+          if (!document.body.contains(gdriveMenu) || r.width === 0 || r.height === 0) {
             removeCompanionMenu();
             clearInterval(checkInterval);
           }
@@ -506,10 +552,10 @@ function injectInPageContextMenu(): void {
     return;
   }
 
-  // 2. YouTube: Docked above YouTube's HTML5 player context menu popup
+  // 2. YouTube: Docked above YouTube's context menu popup
   if (location.hostname.includes('youtube.com')) {
-    const ytPopup = document.querySelector('.ytp-popup.ytp-contextmenu');
-    if (ytPopup && ytPopup instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+    const ytPopup = findVisibleElement('.ytp-popup.ytp-contextmenu, ytd-menu-popup-renderer, tp-yt-iron-dropdown');
+    if (ytPopup && !document.getElementById('cloudplay-companion-menu')) {
       const rect = ytPopup.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         const companion = document.createElement('div');
@@ -544,9 +590,10 @@ function injectInPageContextMenu(): void {
           e.stopPropagation();
           e.preventDefault();
           removeCompanionMenu();
-          const popup = document.querySelector('.ytp-popup.ytp-contextmenu') as HTMLElement;
-          if (popup) popup.style.display = 'none';
-          const url = lastTargetUrl || location.href;
+          if (ytPopup.classList.contains('ytp-contextmenu')) {
+            ytPopup.style.display = 'none';
+          }
+          const url = lastTargetUrl || resolveTargetUrl(lastContextTarget) || location.href;
           showInPageModal(url);
         });
 
@@ -561,7 +608,8 @@ function injectInPageContextMenu(): void {
         setTimeout(() => document.addEventListener('mousedown', dismissListener, true), 80);
 
         const checkInterval = setInterval(() => {
-          if (!document.body.contains(ytPopup) || ytPopup.offsetParent === null || (ytPopup as HTMLElement).style.display === 'none') {
+          const r = ytPopup.getBoundingClientRect();
+          if (!document.body.contains(ytPopup) || r.width === 0 || r.height === 0 || ytPopup.style.display === 'none') {
             removeCompanionMenu();
             clearInterval(checkInterval);
           }
@@ -572,7 +620,7 @@ function injectInPageContextMenu(): void {
   }
 
   // 3. MEGA: Attached to dropdown menu safely
-  const megaMenu = document.querySelector('.dropdown-content, .body-dropdown, .context-menu');
+  const megaMenu = findVisibleElement('.dropdown-content, .body-dropdown, .context-menu');
   if (megaMenu && !megaMenu.querySelector('.cloudplay-context-item')) {
     const item = document.createElement('a');
     item.className = 'dropdown-item cloudplay-context-item';
@@ -590,7 +638,7 @@ function injectInPageContextMenu(): void {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      const url = lastTargetUrl || location.href;
+      const url = lastTargetUrl || resolveTargetUrl(lastContextTarget) || location.href;
       ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url });
     });
     megaMenu.prepend(item);
@@ -599,8 +647,8 @@ function injectInPageContextMenu(): void {
 
   // 4. OneDrive / SharePoint: Docked companion bar outside React tree
   if (location.hostname.includes('live.com') || location.hostname.includes('sharepoint.com') || location.hostname.includes('1drv.ms')) {
-    const oneDriveMenu = document.querySelector('.ms-ContextualMenu, .ms-ContextualMenu-list');
-    if (oneDriveMenu && oneDriveMenu instanceof HTMLElement && !document.getElementById('cloudplay-companion-menu')) {
+    const oneDriveMenu = findVisibleElement('.ms-ContextualMenu, .ms-ContextualMenu-list, [role="menu"]');
+    if (oneDriveMenu && !document.getElementById('cloudplay-companion-menu')) {
       const rect = oneDriveMenu.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         const companion = document.createElement('div');
@@ -693,16 +741,33 @@ function showInPageModal(targetUrl: string): void {
 
   if (isGDrive) {
     const fileId = extractDriveFileId(targetUrl);
-    embedUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : targetUrl;
+    if (!fileId) {
+      ext.runtime.sendMessage({ type: 'OPEN_PLAYER', url: targetUrl });
+      return;
+    }
+    embedUrl = `https://drive.google.com/file/d/${fileId}/preview`;
     title = 'Google Drive Video';
   } else if (isYouTube) {
     const ytId = extractYouTubeVideoId(targetUrl);
+    const listMatch = targetUrl.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    const playlistId = listMatch ? listMatch[1] : null;
+    const isHttpOrigin = location.protocol === 'http:' || location.protocol === 'https:';
+    const originParam = isHttpOrigin ? `&origin=${encodeURIComponent(location.origin)}` : '';
     embedUrl = ytId
-      ? `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&enablejsapi=1&playsinline=1&origin=${encodeURIComponent(location.origin)}`
+      ? `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&enablejsapi=1&playsinline=1${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}${originParam}`
+      : playlistId
+      ? `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&enablejsapi=1&playsinline=1${originParam}`
       : targetUrl;
     const pageTitle = document.title ? document.title.replace(/\s*-\s*YouTube.*$/, '').trim() : '';
     title = pageTitle ? `YouTube • ${pageTitle}` : 'YouTube Video';
   }
+
+  // Pause any currently playing host page video so audio doesn't overlap
+  try {
+    document.querySelectorAll('video').forEach((v) => {
+      if (!v.paused) v.pause();
+    });
+  } catch {}
 
   activeTargetUrl = targetUrl;
 

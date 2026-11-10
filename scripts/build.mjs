@@ -1,6 +1,7 @@
 // CloudPlay build script — esbuild only, no framework.
 // Usage: node scripts/build.mjs [--chrome|--firefox] [--watch]
 import * as esbuild from 'esbuild';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, readdir, copyFile, writeFile, readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import path from 'node:path';
@@ -49,6 +50,7 @@ function manifest(target) {
   const icons = { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' };
   const basePermissions = [
     'storage',
+    'tabs',
     'contextMenus',
     'activeTab',
     'declarativeNetRequest',
@@ -56,7 +58,7 @@ function manifest(target) {
   ];
   const permissions = target === 'firefox'
     ? [...basePermissions, 'webRequest', 'webRequestBlocking']
-    : basePermissions;
+    : [...basePermissions, 'management'];
 
   const m = {
     manifest_version: 3,
@@ -70,6 +72,9 @@ function manifest(target) {
     options_ui: { page: 'options.html', open_in_tab: true },
     permissions,
     host_permissions: HOSTS,
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+    },
     content_scripts: [{ matches: CONTENT_MATCHES, js: ['content.js'], run_at: 'document_idle' }],
   };
   if (target === 'chrome') {
@@ -88,7 +93,12 @@ function manifest(target) {
 
 async function buildTarget(target) {
   const outdir = path.join(root, 'dist', target);
+  try {
+    await rm(path.join(outdir, 'chunks'), { recursive: true, force: true });
+  } catch {}
   await mkdir(outdir, { recursive: true });
+
+  const hasEac3Pkg = existsSync(path.join(root, 'node_modules', '@audio', 'decode-eac3'));
 
   const common = {
     absWorkingDir: root,
@@ -100,7 +110,7 @@ async function buildTarget(target) {
     logLevel: 'warning',
     legalComments: 'none',
     metafile: true,
-    external: ['@audio/decode-eac3'],
+    external: hasEac3Pkg ? [] : ['@audio/decode-eac3'],
   };
   const configs = [
     // Classic scripts: SW / event page and content script must not be ES modules.

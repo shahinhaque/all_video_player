@@ -9,6 +9,7 @@ export class BlobEngine implements PlaybackEngine {
   private host: EngineHost;
   private objectUrl: string = '';
   private abortCtrl: AbortController = new AbortController();
+  private fallbackEngine: PlaybackEngine | null = null;
 
   constructor(video: HTMLVideoElement, src: RangeByteSource, host: EngineHost) {
     this.video = video;
@@ -32,16 +33,20 @@ export class BlobEngine implements PlaybackEngine {
 
       this.video.addEventListener('error', () => {
         const err = this.video.error;
-        if (!err || this.abortCtrl.signal.aborted) return;
+        if (!err || this.abortCtrl.signal.aborted || this.fallbackEngine) return;
         const name = this.src.name?.toLowerCase() || '';
         const isMkv = name.endsWith('.mkv') || this.src.mime?.includes('matroska');
-        if (err.code === 4 && isMkv) {
-          this.host.fail(
-            new PlayerError(
-              'codec',
-              'Chromium does not support native Matroska (.mkv) container decoding. Open in Firefox (native MKV support) or stream MP4/TS.'
-            )
-          );
+        if (isMkv) {
+          void (async () => {
+            try {
+              const { MkvEngine } = await import('./mkv.js');
+              this.fallbackEngine = new MkvEngine(this.video, this.src, this.host);
+              await this.fallbackEngine.attach(this.video.currentTime || startTime);
+              this.video.play().catch(() => {});
+            } catch (e) {
+              this.host.fail(e);
+            }
+          })();
           return;
         }
         this.host.fail(
@@ -66,6 +71,10 @@ export class BlobEngine implements PlaybackEngine {
 
   destroy(): void {
     this.abortCtrl.abort();
+    if (this.fallbackEngine) {
+      this.fallbackEngine.destroy();
+      this.fallbackEngine = null;
+    }
     if (this.objectUrl) {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = '';

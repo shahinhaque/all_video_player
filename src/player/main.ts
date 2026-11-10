@@ -7,7 +7,7 @@ import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
 import { createSubtitleTrackUrl, isSubtitleName, parseSubtitlesToCues, findActiveCue, SubtitleCue } from '../lib/subtitles.js';
 import { PrefetchedByteSource } from '../lib/network.js';
-import { ext, getExtensionPermissions } from '../lib/browser.js';
+import { ext, getExtensionPermissions, sendExtensionMessage } from '../lib/browser.js';
 
 class PlayerController {
   private video = document.getElementById('video-element') as HTMLVideoElement;
@@ -44,6 +44,8 @@ class PlayerController {
   private iconVolHigh = document.getElementById('icon-vol-high') as HTMLElement;
   private iconVolMute = document.getElementById('icon-vol-mute') as HTMLElement;
   private volumeSlider = document.getElementById('volume-slider') as HTMLInputElement;
+  private lastVolume = 1;
+  private isMuted = false;
 
   private timeCurrent = document.getElementById('time-current') as HTMLElement;
   private timeDuration = document.getElementById('time-duration') as HTMLElement;
@@ -113,6 +115,11 @@ class PlayerController {
     this.setupEventListeners();
     this.setupKeyboardShortcuts();
 
+    // Suppress interfering browser download manager extensions (e.g. IDM Integration Module) while player tab is open
+    try {
+      await sendExtensionMessage({ type: 'SUPPRESS_DOWNLOAD_MANAGERS' });
+    } catch {}
+
     // Load user preferences
     try {
       const data = await ext.storage.local.get(['settings', 'volume', 'muted']);
@@ -127,12 +134,20 @@ class PlayerController {
       if (s?.chunkSize) {
         this.preferredChunkSize = s.chunkSize;
       }
-      if (typeof data?.volume === 'number') {
-        this.video.volume = data.volume;
-        this.volumeSlider.value = String(data.volume);
+      if (typeof data?.volume === 'number' && Number.isFinite(data.volume)) {
+        const vol = Math.max(0, Math.min(1, data.volume));
+        this.lastVolume = vol > 0 ? vol : 1;
+        this.video.volume = vol;
+        this.volumeSlider.value = String(vol);
       }
       if (typeof data?.muted === 'boolean') {
+        this.isMuted = data.muted;
         this.video.muted = data.muted;
+        this.video.defaultMuted = data.muted;
+        if (data.muted) {
+          this.video.volume = 0;
+          this.volumeSlider.value = '0';
+        }
         this.updateVolumeIcons();
       }
     } catch {}
@@ -199,6 +214,10 @@ class PlayerController {
     }
 
     try {
+      try {
+        await sendExtensionMessage({ type: 'SUPPRESS_DOWNLOAD_MANAGERS' });
+      } catch {}
+
       let source: RangeByteSource;
       if (this.prefetchedNext && this.prefetchedNext.itemId === item.id) {
         source = this.prefetchedNext.source;
@@ -222,6 +241,7 @@ class PlayerController {
       const host: EngineHost = {
         warn: (msg: string) => this.showWarning(msg),
         fail: (err: unknown) => {
+          this.showBuffering(false);
           const pe = toPlayerError(err);
           // If native video playback failed on Google Drive, fallback to Drive preview player
           if (item.provider === 'gdrive' && this.drivePreviewFrame && !this.drivePreviewFrame.src.includes('drive.google.com')) {
@@ -278,6 +298,9 @@ class PlayerController {
       }
       await engine.attach(savedSec);
 
+      // Re-apply saved mute/volume state after attaching media source
+      this.applySavedVolumeState();
+
       this.discoverNativeTextTracks();
 
       // Auto-load companion subtitles if present
@@ -321,9 +344,15 @@ class PlayerController {
     this.video.pause();
     this.video.hidden = true;
     this.drivePreviewFrame.hidden = false;
+    const videoId = item.ref?.videoId || '';
+    const playlistId = item.ref?.playlistId || '';
+    const isHttpOrigin = location.protocol === 'http:' || location.protocol === 'https:';
+    const originParam = isHttpOrigin ? `&origin=${encodeURIComponent(location.origin)}` : '';
     const embedUrl =
       item.ref?.embedUrl ||
-      `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&playsinline=1&origin=${encodeURIComponent(location.origin)}`;
+      (videoId
+        ? `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&playsinline=1${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}${originParam}`
+        : `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&enablejsapi=1&playsinline=1${originParam}`);
     this.drivePreviewFrame.src = embedUrl;
     this.codecPill.hidden = false;
     this.codecPill.textContent = 'YOUTUBE';
@@ -358,7 +387,14 @@ class PlayerController {
     this.video.addEventListener('progress', () => this.onProgress());
     this.video.addEventListener('waiting', () => this.showBuffering(true));
     this.video.addEventListener('playing', () => this.showBuffering(false));
-    this.video.addEventListener('loadedmetadata', () => this.discoverNativeTextTracks());
+    this.video.addEventListener('canplay', () => this.showBuffering(false));
+    this.video.addEventListener('loadeddata', () => this.showBuffering(false));
+    this.video.addEventListener('error', () => this.showBuffering(false));
+    this.video.addEventListener('loadedmetadata', () => {
+      this.applySavedVolumeState();
+      this.discoverNativeTextTracks();
+    });
+    this.video.addEventListener('volumechange', () => this.updateVolumeIcons());
     if (this.video.textTracks) {
       this.video.textTracks.addEventListener('addtrack', () => this.discoverNativeTextTracks());
     }
@@ -374,16 +410,15 @@ class PlayerController {
     window.addEventListener('touchend', (e) => this.onTimelineTouchEnd(e));
 
     // Volume
-    this.volumeSlider.addEventListener('input', () => {
-      this.video.volume = parseFloat(this.volumeSlider.value);
-      this.video.muted = this.video.volume === 0;
-      this.updateVolumeIcons();
-      ext.storage.local.set({ volume: this.video.volume, muted: this.video.muted }).catch(() => {});
+    this.volumeSlider.addEventListener('input', (e) => {
+      e.stopPropagation();
+      const val = parseFloat(this.volumeSlider.value);
+      this.setVolume(Number.isFinite(val) ? val : 1);
     });
-    this.btnMute.addEventListener('click', () => {
-      this.video.muted = !this.video.muted;
-      this.updateVolumeIcons();
-      ext.storage.local.set({ muted: this.video.muted }).catch(() => {});
+    this.btnMute.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggleMute();
     });
 
     // Audio Tracks menu
@@ -443,8 +478,8 @@ class PlayerController {
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
     document.addEventListener('fullscreenchange', () => {
       const isFs = !!document.fullscreenElement;
-      this.iconFsEnter.hidden = isFs;
-      this.iconFsExit.hidden = !isFs;
+      this.setElementHidden(this.iconFsEnter, isFs);
+      this.setElementHidden(this.iconFsExit, !isFs);
     });
 
     // Add folder or stream URL form
@@ -569,20 +604,16 @@ class PlayerController {
           break;
         case 'ArrowUp':
           e.preventDefault();
-          this.video.volume = Math.min(1, this.video.volume + 0.05);
-          this.volumeSlider.value = String(this.video.volume);
-          this.updateVolumeIcons();
+          this.setVolume(Math.min(1, (this.isMuted ? 0 : this.video.volume) + 0.05));
           break;
         case 'ArrowDown':
           e.preventDefault();
-          this.video.volume = Math.max(0, this.video.volume - 0.05);
-          this.volumeSlider.value = String(this.video.volume);
-          this.updateVolumeIcons();
+          this.setVolume(Math.max(0, (this.isMuted ? 0 : this.video.volume) - 0.05));
           break;
         case 'm':
         case 'M':
-          this.video.muted = !this.video.muted;
-          this.updateVolumeIcons();
+          e.preventDefault();
+          this.toggleMute();
           break;
         case 'f':
         case 'F':
@@ -622,8 +653,8 @@ class PlayerController {
   }
 
   private updatePlayPauseIcon(isPlaying: boolean): void {
-    this.iconPlay.hidden = isPlaying;
-    this.iconPause.hidden = !isPlaying;
+    this.setElementHidden(this.iconPlay, isPlaying);
+    this.setElementHidden(this.iconPause, !isPlaying);
   }
 
   private playNext(): void {
@@ -682,18 +713,18 @@ class PlayerController {
     this.timeCurrent.textContent = formatTime(cur);
     this.timeDuration.textContent = formatTime(dur);
 
-    if (dur > 0) {
+    // Update subtitle overlay from active cues if active
+    if (this.activeCues.length > 0) {
+      const active = findActiveCue(this.activeCues, cur);
+      this.displaySubtitle(active ? active.text : null);
+    }
+
+    if (dur > 0 && Number.isFinite(dur)) {
       const pct = (cur / dur) * 100;
       this.playedBar.style.width = `${pct}%`;
       this.seekThumb.style.left = `${pct}%`;
 
-      // Update subtitle overlay from active cues if active
-      if (this.activeCues.length > 0) {
-        const active = findActiveCue(this.activeCues, cur);
-        this.displaySubtitle(active ? active.text : null);
-      }
-
-      // Pre-resolve next item and prefetch initial 1 MB at 80% progress
+      // Pre-resolve next item and prefetch initial 1 MB at 80% progress (skip direct HTTP files to avoid IDM popups)
       if (
         cur / dur >= 0.8 &&
         !this.isPrefetchingNext &&
@@ -701,7 +732,11 @@ class PlayerController {
         this.playlistManager.isAutoNext()
       ) {
         const nextItem = this.playlistManager.items[this.playlistManager.currentIndex + 1];
-        if (nextItem && (!this.prefetchedNext || this.prefetchedNext.itemId !== nextItem.id)) {
+        const lowerNext = (nextItem?.name || '').toLowerCase();
+        const isDirectHttpFile =
+          nextItem?.provider === 'http' &&
+          (lowerNext.endsWith('.mkv') || lowerNext.endsWith('.mp4') || lowerNext.endsWith('.webm'));
+        if (nextItem && !isDirectHttpFile && (!this.prefetchedNext || this.prefetchedNext.itemId !== nextItem.id)) {
           this.prefetchNextItem(nextItem);
         }
       }
@@ -825,10 +860,98 @@ class PlayerController {
     this.timelineTooltip.textContent = formatTime(pos * dur);
   }
 
+  private setElementHidden(el: Element | null | undefined, hidden: boolean): void {
+    if (!el) return;
+    el.classList.toggle('hidden', hidden);
+    if (hidden) {
+      el.setAttribute('hidden', '');
+      (el as HTMLElement).style.display = 'none';
+    } else {
+      el.removeAttribute('hidden');
+      (el as HTMLElement).style.display = '';
+    }
+  }
+
+  private applySavedVolumeState(): void {
+    if (this.isMuted) {
+      this.video.muted = true;
+      this.video.defaultMuted = true;
+      this.video.volume = 0;
+      this.volumeSlider.value = '0';
+    } else {
+      const vol = this.lastVolume > 0 ? this.lastVolume : 1;
+      this.video.muted = false;
+      this.video.defaultMuted = false;
+      this.video.volume = vol;
+      this.volumeSlider.value = String(vol);
+    }
+    this.updateVolumeIcons();
+  }
+
+  private setVolume(vol: number): void {
+    const clamped = Math.max(0, Math.min(1, vol));
+    if (clamped > 0) {
+      this.lastVolume = clamped;
+      this.isMuted = false;
+      this.video.muted = false;
+      this.video.defaultMuted = false;
+      this.video.volume = clamped;
+      this.volumeSlider.value = String(clamped);
+    } else {
+      this.isMuted = true;
+      this.video.muted = true;
+      this.video.defaultMuted = true;
+      this.video.volume = 0;
+      this.volumeSlider.value = '0';
+    }
+    this.syncIframeMuteState();
+    this.updateVolumeIcons();
+    ext.storage.local.set({ volume: this.lastVolume, muted: this.isMuted }).catch(() => {});
+  }
+
+  private toggleMute(): void {
+    const currentlyMuted = this.isMuted || this.video.muted || this.video.volume === 0;
+    if (!currentlyMuted) {
+      if (this.video.volume > 0) {
+        this.lastVolume = this.video.volume;
+      }
+      this.isMuted = true;
+      this.video.muted = true;
+      this.video.defaultMuted = true;
+      this.video.volume = 0;
+      this.volumeSlider.value = '0';
+    } else {
+      const restoreVol = this.lastVolume > 0 ? this.lastVolume : 1;
+      this.lastVolume = restoreVol;
+      this.isMuted = false;
+      this.video.muted = false;
+      this.video.defaultMuted = false;
+      this.video.volume = restoreVol;
+      this.volumeSlider.value = String(restoreVol);
+    }
+    this.syncIframeMuteState();
+    this.updateVolumeIcons();
+    ext.storage.local.set({ volume: this.lastVolume, muted: this.isMuted }).catch(() => {});
+  }
+
+  private syncIframeMuteState(): void {
+    if (this.drivePreviewFrame && !this.drivePreviewFrame.hidden && this.drivePreviewFrame.contentWindow) {
+      try {
+        const func = this.isMuted ? 'mute' : 'unMute';
+        this.drivePreviewFrame.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func, args: [] }),
+          '*'
+        );
+      } catch {}
+    }
+  }
+
   private updateVolumeIcons(): void {
-    const muted = this.video.muted || this.video.volume === 0;
-    this.iconVolHigh.hidden = muted;
-    this.iconVolMute.hidden = !muted;
+    const muted = this.isMuted || this.video.muted || this.video.volume === 0;
+    this.setElementHidden(this.iconVolHigh, muted);
+    this.setElementHidden(this.iconVolMute, !muted);
+    this.btnMute?.setAttribute('aria-label', muted ? 'Unmute (m)' : 'Mute (m)');
+    this.btnMute?.setAttribute('title', muted ? 'Unmute (m)' : 'Mute (m)');
   }
 
   private setSpeed(speed: number): void {
@@ -1093,12 +1216,24 @@ class PlayerController {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;
       }
+      if (this.video.textTracks) {
+        for (let i = 0; i < this.video.textTracks.length; i++) {
+          this.video.textTracks[i].mode = 'disabled';
+        }
+      }
       if (this.currentEngine?.setSubtitleTrack) {
         await this.currentEngine.setSubtitleTrack(trackId);
       }
     } else if (trackId.startsWith('native-texttrack-')) {
       // Embedded native HTML5 video track (MP4/WebM)
       this.activeCues = [];
+      if (this.activeSubTrack) {
+        this.activeSubTrack.remove();
+        this.activeSubTrack = null;
+      }
+      if (this.currentEngine?.setSubtitleTrack) {
+        await this.currentEngine.setSubtitleTrack(null);
+      }
       const idx = parseInt(trk.ref?.nativeTrackIndex || '-1', 10);
       if (idx >= 0 && this.video.textTracks && this.video.textTracks[idx]) {
         for (let i = 0; i < this.video.textTracks.length; i++) {
@@ -1114,6 +1249,9 @@ class PlayerController {
       }
     } else {
       // Companion external or uploaded subtitle
+      if (this.currentEngine?.setSubtitleTrack) {
+        await this.currentEngine.setSubtitleTrack(null);
+      }
       await this.loadExternalSubtitle(trk);
     }
 

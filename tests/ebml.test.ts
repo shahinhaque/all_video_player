@@ -6,8 +6,11 @@ import {
   readUint,
   readFloat,
   parseMkvHeaders,
+  parseMkvBlock,
   EBML_ID,
 } from '../src/engines/ebml.js';
+import { MkvDemuxer, MkvSubtitleCue } from '../src/engines/mkv-demuxer.js';
+import { parseAvcCodecPrivate, parseAacCodecPrivate } from '../src/engines/mkv.js';
 
 describe('EBML & Matroska Parser', () => {
   it('reads 1-byte and multi-byte VINTs accurately', () => {
@@ -123,5 +126,98 @@ describe('EBML & Matroska Parser', () => {
     expect(info?.tracks[0].codecId).toBe('V_MPEG4/ISO/AVC');
     expect(info?.tracks[0].width).toBe(1920);
     expect(info?.tracks[0].height).toBe(1080);
+  });
+
+  it('extracts subtitle cues and durations from Matroska BlockGroup elements', () => {
+    const dummySource = {
+      name: 'test.mkv',
+      size: 1024,
+      mime: 'video/x-matroska',
+      encrypted: false,
+      read: async () => new ReadableStream<Uint8Array>(),
+    };
+    const demuxer = new MkvDemuxer(dummySource);
+    demuxer.setActiveSubtitleTrack(3);
+
+    const receivedCues: MkvSubtitleCue[] = [];
+    demuxer.onSubtitleCue((cue) => receivedCues.push(cue));
+
+    // Build Cluster -> Timecode (1000ms) -> BlockGroup -> Block (track 3, relTime 500ms, "Hello MKV") + BlockDuration (2500ms)
+    const textBytes = new TextEncoder().encode('Hello MKV');
+    const blockPayload = new Uint8Array(4 + textBytes.length);
+    blockPayload[0] = 0x80 | 3; // Track 3 VINT
+    blockPayload[1] = (500 >> 8) & 0xff;
+    blockPayload[2] = 500 & 0xff;
+    blockPayload[3] = 0x00; // flags
+    blockPayload.set(textBytes, 4);
+
+    // Block element (0xA1) + 1-byte size + blockPayload
+    // BlockDuration element (0x9B) + 1-byte size (0x82) + 2500 (0x09C4)
+    const blockGroupContent = new Uint8Array(2 + blockPayload.length + 4);
+    blockGroupContent[0] = EBML_ID.Block;
+    blockGroupContent[1] = 0x80 | blockPayload.length;
+    blockGroupContent.set(blockPayload, 2);
+    const durOffset = 2 + blockPayload.length;
+    blockGroupContent[durOffset] = EBML_ID.BlockDuration;
+    blockGroupContent[durOffset + 1] = 0x82;
+    blockGroupContent[durOffset + 2] = (2500 >> 8) & 0xff;
+    blockGroupContent[durOffset + 3] = 2500 & 0xff;
+
+    // Cluster (0x1F43B675) + size + Timecode (0xE7, size 2, 1000) + BlockGroup (0xA0)
+    const clusterBytes: number[] = [
+      0x1f, 0x43, 0xb6, 0x75, 0x80 | (4 + 2 + blockGroupContent.length),
+      EBML_ID.Timecode, 0x82, (1000 >> 8) & 0xff, 1000 & 0xff,
+      EBML_ID.BlockGroup, 0x80 | blockGroupContent.length,
+      ...blockGroupContent,
+    ];
+
+    demuxer.demuxBuffer(new Uint8Array(clusterBytes));
+
+    expect(receivedCues).toHaveLength(1);
+    expect(receivedCues[0].trackNumber).toBe(3);
+    expect(receivedCues[0].timeSec).toBeCloseTo(1.5, 2);
+    expect(receivedCues[0].durationSec).toBeCloseTo(2.5, 2);
+    expect(receivedCues[0].text).toBe('Hello MKV');
+    expect(demuxer.getCuesForTrack(3)).toHaveLength(1);
+  });
+
+  it('parses Matroska fixed-size and Xiph block lacing accurately', () => {
+    // Fixed-size lacing: flags = 0x84 (keyframe + fixed lacing 0b10 << 1), 2 frames (numFrames - 1 = 1), 3 bytes each
+    const fixedPayload = new Uint8Array([
+      0x82, // Track 2
+      0x00, 0x64, // Timecode 100
+      0x84, // Keyframe + Fixed-size lacing
+      0x01, // 2 frames (1 + 1)
+      0xaa, 0xbb, 0xcc,
+      0xdd, 0xee, 0xff,
+    ]);
+    const parsedFixed = parseMkvBlock(fixedPayload);
+    expect(parsedFixed).not.toBeNull();
+    expect(parsedFixed?.trackNumber).toBe(2);
+    expect(parsedFixed?.frames).toHaveLength(2);
+    expect(Array.from(parsedFixed!.frames[0])).toEqual([0xaa, 0xbb, 0xcc]);
+    expect(Array.from(parsedFixed!.frames[1])).toEqual([0xdd, 0xee, 0xff]);
+  });
+
+  it('parses AVC and AAC CodecPrivate records for fMP4 remuxing', () => {
+    const avcC = new Uint8Array([
+      0x01, 0x64, 0x00, 0x28, 0xff, // version 1, High Profile (0x64), compat 0, level 4.0 (0x28), 4-byte NAL length
+      0xe1, 0x00, 0x04, 0x67, 0x64, 0x00, 0x28, // 1 SPS of 4 bytes
+      0x01, 0x00, 0x04, 0x68, 0xee, 0x3c, 0x80, // 1 PPS of 4 bytes
+    ]);
+    const avc = parseAvcCodecPrivate(avcC);
+    expect(avc).not.toBeNull();
+    expect(avc?.profileIdc).toBe(0x64);
+    expect(avc?.levelIdc).toBe(0x28);
+    expect(avc?.nalLengthSize).toBe(4);
+    expect(avc?.sps).toHaveLength(1);
+    expect(avc?.pps).toHaveLength(1);
+
+    // AAC-LC (2), 44100 Hz (index 4), Stereo (2): (2 << 3) | (4 >> 1) = 0x12, ((4 & 1) << 7) | (2 << 3) = 0x10
+    const aac = parseAacCodecPrivate(new Uint8Array([0x12, 0x10]));
+    expect(aac.audioobjecttype).toBe(2);
+    expect(aac.samplingfrequencyindex).toBe(4);
+    expect(aac.samplerate).toBe(44100);
+    expect(aac.channelcount).toBe(2);
   });
 });

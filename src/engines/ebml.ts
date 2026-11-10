@@ -146,7 +146,9 @@ export function readEbmlString(data: Uint8Array, offset: number, length: number)
 export const EBML_ID = {
   EBML: 0x1a45dfa3,
   DocType: 0x4282,
+  Void: 0xec,
   Segment: 0x18538067,
+  SeekHead: 0x114d9b74,
   Info: 0x1549a966,
   TimecodeScale: 0x2ad7b1,
   Duration: 0x4489,
@@ -168,8 +170,14 @@ export const EBML_ID = {
   AudioSettings: 0xe1,
   SamplingFrequency: 0xb5,
   Channels: 0x9f,
+  Attachments: 0x1941a469,
+  Chapters: 0x1043a770,
+  Tags: 0x1254c367,
+  Cues: 0x1c53bb6b,
   Cluster: 0x1f43b675,
   Timecode: 0xe7,
+  Position: 0xa7,
+  PrevSize: 0xab,
   SimpleBlock: 0xa3,
   BlockGroup: 0xa0,
   Block: 0xa1,
@@ -194,6 +202,7 @@ export interface MkvHeaderInfo {
   timecodeScale: number; // in nanoseconds, default 1,000,000 ns = 1 ms
   duration: number; // in seconds
   tracks: TrackMetadata[];
+  firstClusterOffset?: number;
 }
 
 /**
@@ -336,7 +345,7 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
         trkOff = trkElem.dataOffset + trkElem.dataSize;
       }
       offset = elem.dataOffset + elem.dataSize;
-      break; // Found tracks, finish header scan
+      continue;
     }
 
     if (elem.id === EBML_ID.Cluster) {
@@ -356,6 +365,7 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
     timecodeScale,
     duration: durationSec,
     tracks,
+    firstClusterOffset: offset > 0 ? offset : undefined,
   };
 }
 
@@ -364,10 +374,11 @@ export interface MkvBlock {
   timecode: number; // in relative cluster time units
   isKeyframe: boolean;
   data: Uint8Array;
+  frames: Uint8Array[];
 }
 
 /**
- * Parses a SimpleBlock or Block element payload into trackNumber, timecode, and payload data.
+ * Parses a SimpleBlock or Block element payload into trackNumber, timecode, and unlaced frame payloads.
  */
 export function parseMkvBlock(payload: Uint8Array): MkvBlock | null {
   if (payload.length < 4) return null;
@@ -381,18 +392,96 @@ export function parseMkvBlock(payload: Uint8Array): MkvBlock | null {
   const signedTimecode = (timecode << 16) >> 16;
   offset += 2;
 
-  // Flags: bit 7 = keyframe (for SimpleBlock)
+  // Flags: bit 7 = keyframe (for SimpleBlock), bits 1..2 = lacing
   const flags = payload[offset];
   const isKeyframe = (flags & 0x80) !== 0;
+  const lacing = (flags & 0x06) >> 1;
   offset += 1;
 
-  // Remainder is data
-  const data = payload.subarray(offset);
+  const rawRemainder = payload.subarray(offset);
+  const frames: Uint8Array[] = [];
+
+  if (lacing === 0 || offset >= payload.length) {
+    frames.push(rawRemainder);
+  } else {
+    const numFrames = payload[offset] + 1;
+    offset += 1;
+
+    if (lacing === 2) {
+      // Fixed-size lacing
+      const remaining = payload.length - offset;
+      const frameSize = Math.floor(remaining / numFrames);
+      if (frameSize > 0) {
+        for (let i = 0; i < numFrames; i++) {
+          const end = i === numFrames - 1 ? payload.length : offset + frameSize;
+          if (offset < end && end <= payload.length) {
+            frames.push(payload.subarray(offset, end));
+          }
+          offset = end;
+        }
+      }
+    } else if (lacing === 1) {
+      // Xiph lacing
+      const sizes: number[] = [];
+      let sumSizes = 0;
+      for (let i = 0; i < numFrames - 1; i++) {
+        let sz = 0;
+        while (offset < payload.length) {
+          const b = payload[offset++];
+          sz += b;
+          if (b < 255) break;
+        }
+        sizes.push(sz);
+        sumSizes += sz;
+      }
+      sizes.push(Math.max(0, payload.length - offset - sumSizes));
+      for (const sz of sizes) {
+        if (sz > 0 && offset + sz <= payload.length) {
+          frames.push(payload.subarray(offset, offset + sz));
+          offset += sz;
+        }
+      }
+    } else if (lacing === 3) {
+      // EBML lacing
+      const sizes: number[] = [];
+      let sumSizes = 0;
+      const firstVint = readVint(payload, offset);
+      if (firstVint) {
+        offset += firstVint.length;
+        let prevSize = firstVint.value;
+        sizes.push(prevSize);
+        sumSizes += prevSize;
+
+        for (let i = 1; i < numFrames - 1; i++) {
+          const v = readVint(payload, offset);
+          if (!v) break;
+          offset += v.length;
+          const bias = (1 << (7 * v.length - 1)) - 1;
+          const delta = v.value - bias;
+          prevSize = prevSize + delta;
+          sizes.push(prevSize);
+          sumSizes += prevSize;
+        }
+        sizes.push(Math.max(0, payload.length - offset - sumSizes));
+        for (const sz of sizes) {
+          if (sz > 0 && offset + sz <= payload.length) {
+            frames.push(payload.subarray(offset, offset + sz));
+            offset += sz;
+          }
+        }
+      }
+    }
+
+    if (frames.length === 0) {
+      frames.push(rawRemainder);
+    }
+  }
 
   return {
     trackNumber: trk.value,
     timecode: signedTimecode,
     isKeyframe,
-    data,
+    data: frames[0] || rawRemainder,
+    frames,
   };
 }

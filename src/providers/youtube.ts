@@ -79,7 +79,9 @@ export class YouTubeProvider implements SourceProvider {
     }
 
     const embedUrl = effectiveVideoId
-      ? `https://www.youtube-nocookie.com/embed/${effectiveVideoId}?autoplay=1&enablejsapi=1`
+      ? `https://www.youtube-nocookie.com/embed/${effectiveVideoId}?autoplay=1&enablejsapi=1&playsinline=1${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}`
+      : playlistId
+      ? `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&autoplay=1&enablejsapi=1&playsinline=1`
       : '';
 
     const item: MediaItem = {

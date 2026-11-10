@@ -4,20 +4,14 @@ import { isVideoName, guessMime } from '../lib/media.js';
 import { isSubtitleName, pairSubtitlesWithVideos } from '../lib/subtitles.js';
 import { fetchWithRetry } from '../lib/network.js';
 import { sendExtensionMessage } from '../lib/browser.js';
+import { decodeHtmlEntities, limitStream } from '../lib/util.js';
 
 /**
  * Fetches text content from a URL, with automatic fallback to extension background worker
  * if direct browser fetch encounters CORS or network restrictions.
  */
 export async function fetchText(url: string): Promise<string> {
-  try {
-    const res = await fetch(url);
-    if (res.ok) {
-      return await res.text();
-    }
-  } catch {}
-
-  // Fallback to background worker messaging
+  // Prefer background worker fetch (tabId === -1) to bypass CORS and prevent download manager interception
   const resp = await sendExtensionMessage<{ ok: boolean; text?: string; error?: string }>({
     type: 'FETCH_TEXT',
     url,
@@ -26,6 +20,14 @@ export async function fetchText(url: string): Promise<string> {
   if (resp?.ok && typeof resp.text === 'string') {
     return resp.text;
   }
+
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      return await res.text();
+    }
+  } catch {}
+
   if (resp?.error) {
     const hint = ' If using Firefox, please ensure host permissions are granted in about:addons -> CloudPlay -> Permissions, or allow access when prompted.';
     throw new PlayerError('network', `Background fetch failed: ${resp.error}.${hint}`);
@@ -51,13 +53,15 @@ export function parseDirectoryHtml(htmlOrText: string, baseUrl: string): Directo
 
   const baseObj = new URL(baseUrl);
   const basePath = baseObj.pathname.endsWith('/') ? baseObj.pathname : baseObj.pathname + '/';
+  baseObj.pathname = basePath;
+  const normalizedBaseUrl = baseObj.href;
 
   const hrefRegex = /href=["']([^"']+)["']/gi;
   let match: RegExpExecArray | null;
   const seenUrls = new Set<string>();
 
   while ((match = hrefRegex.exec(htmlOrText)) !== null) {
-    const rawHref = match[1].trim();
+    const rawHref = decodeHtmlEntities(match[1].trim());
     if (!rawHref || rawHref.startsWith('?') || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) {
       continue;
     }
@@ -66,7 +70,7 @@ export function parseDirectoryHtml(htmlOrText: string, baseUrl: string): Directo
 
     let fullUrl: string;
     try {
-      fullUrl = new URL(rawHref, baseUrl).href;
+      fullUrl = new URL(rawHref, normalizedBaseUrl).href;
     } catch {
       continue;
     }
@@ -265,31 +269,29 @@ export class DirectProvider implements SourceProvider {
     let size = 0;
     let mime = guessMime(name, 'video/mp2t');
 
-    try {
-      const probeRes = await fetch(rawUrl, {
-        method: 'HEAD',
-        headers: { Range: 'bytes=0-0' },
-      });
+    if (!isVideoName(name)) {
+      try {
+        const probeResp = await sendExtensionMessage<{
+          ok: boolean;
+          totalSize?: number;
+          contentType?: string;
+        }>({
+          type: 'FETCH_RANGE',
+          url: rawUrl,
+          range: 'bytes=0-0',
+        });
 
-      const disp = probeRes.headers.get('content-disposition');
-      if (disp) {
-        const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp);
-        if (match && match[1]) name = decodeURIComponent(match[1]);
+        if (probeResp?.ok) {
+          if (typeof probeResp.totalSize === 'number' && probeResp.totalSize > 0) {
+            size = probeResp.totalSize;
+          }
+          if (probeResp.contentType && probeResp.contentType.startsWith('video/')) {
+            mime = probeResp.contentType;
+          }
+        }
+      } catch {
+        // Probing is best-effort; fallback to default metadata
       }
-
-      const ct = probeRes.headers.get('content-type');
-      if (ct && ct.startsWith('video/')) mime = ct;
-
-      const cr = probeRes.headers.get('content-range');
-      if (cr) {
-        const m = /\/(\d+)$/.exec(cr);
-        if (m) size = parseInt(m[1], 10);
-      } else {
-        const cl = probeRes.headers.get('content-length');
-        if (cl) size = parseInt(cl, 10);
-      }
-    } catch {
-      // Probing is best-effort; fallback to default metadata
     }
 
     const item: MediaItem = {
@@ -311,65 +313,99 @@ export class DirectProvider implements SourceProvider {
 
   async open(item: MediaItem, signal?: AbortSignal): Promise<RangeByteSource> {
     const directUrl = item.ref.url || item.id;
-    const knownSize = item.size;
+    let resolvedSize = item.size;
 
     return {
       name: item.name,
-      size: knownSize,
+      get size(): number {
+        return resolvedSize;
+      },
       mime: item.mime,
       directUrl,
       encrypted: false,
       async read(start: number, end: number, readSignal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
         const reqSignal = readSignal || signal;
-        try {
-          const res = await fetchWithRetry(directUrl, {
-            headers: { Range: `bytes=${start}-${end}` },
-            signal: reqSignal,
-          });
 
-          if (!res.ok && res.status !== 206) {
-            throw new PlayerError('network', `HTTP ${res.status} error reading range.`);
+        // 1. Primary path in extension: fetch via background service worker (details.tabId === -1)
+        // so browser download managers (IDM, etc.) never intercept active player tab requests.
+        const rangeResp = await sendExtensionMessage<{
+          ok: boolean;
+          b64?: string;
+          bytes?: Uint8Array | number[];
+          totalSize?: number;
+          error?: string;
+        }>({
+          type: 'FETCH_RANGE',
+          url: directUrl,
+          range: `bytes=${start}-${end}`,
+        });
+
+        if (rangeResp?.ok && (typeof rangeResp.b64 === 'string' || rangeResp.bytes)) {
+          if (typeof rangeResp.totalSize === 'number' && rangeResp.totalSize > 0) {
+            resolvedSize = rangeResp.totalSize;
           }
-
-          if (!res.body) {
-            throw new PlayerError('network', 'Empty response body from direct stream.');
-          }
-
-          return res.body;
-        } catch (fetchErr) {
-          // If direct fetch fails (e.g. mixed content / CORS in Firefox), fallback to background worker
-          const rangeResp = await sendExtensionMessage<{
-            ok: boolean;
-            bytes?: Uint8Array | number[];
-            error?: string;
-          }>({
-            type: 'FETCH_RANGE',
-            url: directUrl,
-            range: `bytes=${start}-${end}`,
-          });
-
-          if (rangeResp?.ok && rangeResp.bytes) {
-            let bytesArray: Uint8Array;
-            if (rangeResp.bytes instanceof Uint8Array) {
-              bytesArray = rangeResp.bytes;
-            } else if (Array.isArray(rangeResp.bytes)) {
-              bytesArray = new Uint8Array(rangeResp.bytes);
-            } else if (typeof rangeResp.bytes === 'object') {
-              bytesArray = new Uint8Array(Object.values(rangeResp.bytes));
-            } else {
-              bytesArray = new Uint8Array(0);
+          let bytesArray: Uint8Array;
+          if (typeof rangeResp.b64 === 'string' && rangeResp.b64.length > 0 && typeof atob === 'function') {
+            const binStr = atob(rangeResp.b64);
+            bytesArray = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+              bytesArray[i] = binStr.charCodeAt(i);
             }
-
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.enqueue(bytesArray);
-                controller.close();
-              },
-            });
+          } else if (rangeResp.bytes instanceof Uint8Array) {
+            bytesArray = rangeResp.bytes;
+          } else if (Array.isArray(rangeResp.bytes)) {
+            bytesArray = new Uint8Array(rangeResp.bytes);
+          } else if (rangeResp.bytes && typeof rangeResp.bytes === 'object') {
+            bytesArray = new Uint8Array(Object.values(rangeResp.bytes));
+          } else {
+            bytesArray = new Uint8Array(0);
           }
 
-          throw fetchErr;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytesArray);
+              controller.close();
+            },
+          });
         }
+
+        // 2. Fallback path (e.g. non-extension test environment or if background worker unavailable)
+        const res = await fetchWithRetry(directUrl, {
+          headers: {
+            Range: `bytes=${start}-${end}`,
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          signal: reqSignal,
+        });
+
+        if (!res.ok && res.status !== 206) {
+          throw new PlayerError('network', `HTTP ${res.status} error reading range.`);
+        }
+
+        const cr = res.headers.get('content-range');
+        if (cr) {
+          const m = /\/(\d+)$/.exec(cr);
+          if (m) {
+            const total = parseInt(m[1], 10);
+            if (total > 0) resolvedSize = total;
+          }
+        } else if (res.status === 200 && resolvedSize === 0) {
+          const cl = res.headers.get('content-length');
+          if (cl) {
+            const total = parseInt(cl, 10);
+            if (total > 0) resolvedSize = total;
+          }
+        }
+
+        if (!res.body) {
+          throw new PlayerError('network', 'Empty response body from direct stream.');
+        }
+
+        if (res.status === 200 && start === 0) {
+          return limitStream(res.body, end - start + 1);
+        }
+
+        return res.body;
       },
     };
   }
