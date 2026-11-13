@@ -6,10 +6,11 @@ import {
   readUint,
   readFloat,
   parseMkvHeaders,
+  parseMkvCues,
   parseMkvBlock,
   EBML_ID,
 } from '../src/engines/ebml.js';
-import { MkvDemuxer, MkvSubtitleCue } from '../src/engines/mkv-demuxer.js';
+import { MkvDemuxer, MkvSubtitleCue, MkvAudioChunk } from '../src/engines/mkv-demuxer.js';
 import { parseAvcCodecPrivate, parseAacCodecPrivate } from '../src/engines/mkv.js';
 
 describe('EBML & Matroska Parser', () => {
@@ -219,5 +220,109 @@ describe('EBML & Matroska Parser', () => {
     expect(aac.samplingfrequencyindex).toBe(4);
     expect(aac.samplerate).toBe(44100);
     expect(aac.channelcount).toBe(2);
+  });
+
+  it('parses Matroska Cues index and seeks accurately forward and backward', () => {
+    // Construct Cues element (0x1C53BB6B) with 2 CuePoints:
+    // CuePoint 1: CueTime=5000 (5.0s), CueClusterPosition=200
+    // CuePoint 2: CueTime=30000 (30.0s), CueClusterPosition=10000
+    const cp1 = [
+      EBML_ID.CueTime, 0x82, (5000 >> 8) & 0xff, 5000 & 0xff,
+      EBML_ID.CueTrackPositions, 0x86,
+      EBML_ID.CueTrack, 0x81, 0x01,
+      EBML_ID.CueClusterPosition, 0x81, 200,
+    ];
+    const cp2 = [
+      EBML_ID.CueTime, 0x82, (30000 >> 8) & 0xff, 30000 & 0xff,
+      EBML_ID.CueTrackPositions, 0x87,
+      EBML_ID.CueTrack, 0x81, 0x01,
+      EBML_ID.CueClusterPosition, 0x82, (10000 >> 8) & 0xff, 10000 & 0xff,
+    ];
+    const cuesBody = [
+      EBML_ID.CuePoint, 0x80 | cp1.length, ...cp1,
+      EBML_ID.CuePoint, 0x80 | cp2.length, ...cp2,
+    ];
+    const cuesElem = new Uint8Array([
+      0x1c, 0x53, 0xbb, 0x6b, 0x80 | cuesBody.length,
+      ...cuesBody,
+    ]);
+
+    const parsedCues = parseMkvCues(cuesElem, 50, 1000000);
+    expect(parsedCues).toHaveLength(2);
+    expect(parsedCues[0]).toEqual({ timeSec: 5, clusterByteOffset: 250, trackNumber: 1 });
+    expect(parsedCues[1]).toEqual({ timeSec: 30, clusterByteOffset: 10050, trackNumber: 1 });
+  });
+
+  it('switches audio tracks and subtitle tracks dynamically in MkvDemuxer', () => {
+    const dummySource = {
+      name: 'multi.mkv',
+      size: 4096,
+      mime: 'video/x-matroska',
+      encrypted: false,
+      read: async () => new ReadableStream<Uint8Array>(),
+    };
+    const demuxer = new MkvDemuxer(dummySource);
+    const audioReceived: MkvAudioChunk[] = [];
+    const subReceived: MkvSubtitleCue[] = [];
+    demuxer.onAudioFrame((a) => audioReceived.push(a));
+    demuxer.onSubtitleCue((s) => subReceived.push(s));
+
+    // Create a cluster with Audio Track 2, Audio Track 3, Subtitle Track 4, and Subtitle Track 5
+    const makeSimpleBlock = (trackNum: number, relTime: number, payload: Uint8Array) => {
+      const b = new Uint8Array(4 + payload.length);
+      b[0] = 0x80 | trackNum;
+      b[1] = (relTime >> 8) & 0xff;
+      b[2] = relTime & 0xff;
+      b[3] = 0x80;
+      b.set(payload, 4);
+      return [EBML_ID.SimpleBlock, 0x80 | b.length, ...b];
+    };
+
+    const sbAudio2 = makeSimpleBlock(2, 0, new Uint8Array([0x11, 0x22]));
+    const sbAudio3 = makeSimpleBlock(3, 0, new Uint8Array([0x33, 0x44]));
+    const sbSub4 = makeSimpleBlock(4, 100, new TextEncoder().encode('English Sub'));
+    const sbSub5 = makeSimpleBlock(5, 100, new TextEncoder().encode('Hindi Sub'));
+
+    const clusterContent = [
+      EBML_ID.Timecode, 0x82, (2000 >> 8) & 0xff, 2000 & 0xff,
+      ...sbAudio2,
+      ...sbAudio3,
+      ...sbSub4,
+      ...sbSub5,
+    ];
+    const cluster = new Uint8Array([
+      0x1f, 0x43, 0xb6, 0x75, 0x80 | clusterContent.length,
+      ...clusterContent,
+    ]);
+
+    // Select Audio Track 2 and Subtitle Track 4
+    demuxer.setActiveAudioTrack(2);
+    demuxer.setActiveSubtitleTrack(4);
+    demuxer.demuxBuffer(cluster);
+
+    expect(audioReceived).toHaveLength(1);
+    expect(audioReceived[0].trackNumber).toBe(2);
+    expect(Array.from(audioReceived[0].data)).toEqual([0x11, 0x22]);
+    expect(subReceived).toHaveLength(1);
+    expect(subReceived[0].text).toBe('English Sub');
+
+    // Now swap to Audio Track 3 and Subtitle Track 5
+    audioReceived.length = 0;
+    subReceived.length = 0;
+    demuxer.setActiveAudioTrack(3);
+    demuxer.setActiveSubtitleTrack(5);
+
+    demuxer.seek(2.0);
+    demuxer.demuxBuffer(cluster);
+    expect(audioReceived).toHaveLength(1);
+    expect(audioReceived[0].trackNumber).toBe(3);
+    expect(Array.from(audioReceived[0].data)).toEqual([0x33, 0x44]);
+    expect(subReceived).toHaveLength(1);
+    expect(subReceived[0].text).toBe('Hindi Sub');
+    expect(demuxer.getCuesForTrack(5)).toHaveLength(1);
+    expect(demuxer.getCuesForTrack(5)[0].text).toBe('Hindi Sub');
+    // And Track 4 cues remain cached for instant swap back
+    expect(demuxer.getCuesForTrack(4)).toHaveLength(1);
+    expect(demuxer.getCuesForTrack(4)[0].text).toBe('English Sub');
   });
 });

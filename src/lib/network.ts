@@ -133,6 +133,10 @@ export class PrefetchedByteSource implements RangeByteSource {
     return this.underlying.mime;
   }
 
+  set mime(val: string | undefined) {
+    this.underlying.mime = val;
+  }
+
   get directUrl(): string | undefined {
     return this.underlying.directUrl;
   }

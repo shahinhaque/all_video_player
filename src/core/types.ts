@@ -39,7 +39,7 @@ export interface Playlist {
 export interface RangeByteSource {
   readonly size: number;
   readonly name: string;
-  readonly mime?: string;
+  mime?: string;
   /** URL that a <video> element can load directly (unencrypted sources only). */
   readonly directUrl?: string;
   readonly encrypted: boolean;

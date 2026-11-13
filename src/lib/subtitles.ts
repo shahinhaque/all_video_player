@@ -409,30 +409,66 @@ export function isCompanionSubtitle(videoName: string, subName: string): boolean
     // Remainder must start with a delimiter like '.', '_', '-', or ' '
     if (/^[._\s-]/.test(remainder)) {
       const rest = remainder.replace(/^[._\s-]+/, '').trim();
-      return /^[a-z0-9._-]+$/i.test(rest);
+      if (!rest) return false;
+      // Reject if suffix starts with a digit or looks like another episode/part number (e.g. "Episode 1" vs "Episode 10")
+      if (/^\d/.test(rest) || /^(?:ep|episode|part|pt|cd|disc|s\d+e\d+|e\d+)\b/i.test(rest)) {
+        return false;
+      }
+      return /^[a-z][a-z0-9._-]{0,23}$/i.test(rest);
     }
   }
 
   return false;
 }
 
+function getParentDirectoryUrl(urlOrId?: string): string | null {
+  if (!urlOrId || (!urlOrId.startsWith('http://') && !urlOrId.startsWith('https://'))) {
+    return null;
+  }
+  try {
+    const u = new URL(urlOrId);
+    const parts = u.pathname.split('/').filter(Boolean);
+    parts.pop(); // remove filename
+    // If subtitle is inside a dedicated "Subs" or "Subtitles" subfolder, normalize to parent video directory
+    const lastDir = (parts[parts.length - 1] || '').toLowerCase();
+    if (lastDir === 'subs' || lastDir === 'subtitles' || lastDir === 'sub') {
+      parts.pop();
+    }
+    return `${u.origin}/${parts.join('/')}/`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Pairs subtitle tracks with corresponding video MediaItems based on filename matching.
+ * Pairs subtitle tracks with corresponding video MediaItems based on filename and directory matching.
  */
 export function pairSubtitlesWithVideos(videos: MediaItem[], subtitles: SubtitleTrackInfo[]): void {
-  for (const video of videos) {
-    for (const sub of subtitles) {
-      if (isCompanionSubtitle(video.name, sub.name)) {
-        if (!video.subtitles) video.subtitles = [];
-        if (!video.subtitles.some((s) => s.id === sub.id)) {
-          const { lang, label } = parseSubtitleLanguage(sub.name, video.name);
-          video.subtitles.push({
-            ...sub,
-            label: sub.label || label,
-            srclang: sub.srclang || lang,
-            isDefault: video.subtitles.length === 0,
-          });
-        }
+  for (const sub of subtitles) {
+    const subDir = getParentDirectoryUrl(sub.ref?.url || sub.id);
+    const matchingVideos = videos.filter((video) => {
+      if (!isCompanionSubtitle(video.name, sub.name)) return false;
+      const vidDir = getParentDirectoryUrl(video.ref?.url || video.id);
+      if (subDir && vidDir && subDir !== vidDir) return false;
+      return true;
+    });
+
+    if (matchingVideos.length === 0) continue;
+
+    // Pick only the most specific matching video(s) (longest base filename match)
+    const maxBaseLen = Math.max(...matchingVideos.map((v) => getBaseFileName(v.name).length));
+    const bestVideos = matchingVideos.filter((v) => getBaseFileName(v.name).length === maxBaseLen);
+
+    for (const video of bestVideos) {
+      if (!video.subtitles) video.subtitles = [];
+      if (!video.subtitles.some((s) => s.id === sub.id)) {
+        const { lang, label } = parseSubtitleLanguage(sub.name, video.name);
+        video.subtitles.push({
+          ...sub,
+          label: sub.label || label,
+          srclang: sub.srclang || lang,
+          isDefault: video.subtitles.length === 0,
+        });
       }
     }
   }

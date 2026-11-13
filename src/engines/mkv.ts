@@ -2,6 +2,7 @@ import { PlaybackEngine, RangeByteSource, EngineHost, AudioTrackInfo, SubtitleTr
 import { PlayerError } from '../core/errors.js';
 import { readAll, joinChunks } from '../lib/util.js';
 import { fromTimeRanges, calculateEvictionRanges } from '../lib/buffer.js';
+import { findActiveCue } from '../lib/subtitles.js';
 import { MkvHeaderInfo, TrackMetadata } from './ebml.js';
 import type { MkvDemuxer, MkvVideoChunk, MkvAudioChunk } from './mkv-demuxer.js';
 import type { Eac3AudioPlayer } from './eac3-player.js';
@@ -147,13 +148,16 @@ export class MkvEngine implements PlaybackEngine {
 
   private mkvDemuxer: MkvDemuxer | null = null;
   private eac3Player: Eac3AudioPlayer | null = null;
+  private eac3EventsHooked = false;
   private audioTracks: AudioTrackInfo[] = [];
   private subtitleTracks: SubtitleTrackInfo[] = [];
   private activeAudioTrackId: string | null = null;
   private activeSubtitleTrackId: string | null = null;
   private subtitleCues: { start: number; end: number; text: string }[] = [];
+  private streamWakeResolver: (() => void) | null = null;
 
   private isRemuxingToMp4 = false;
+  private sourceBufferHasAudio = false;
   private avcConfig: AvcCodecConfig | null = null;
   private aacConfig: AacCodecConfig | null = null;
   private videoTrackMeta: TrackMetadata | null = null;
@@ -167,6 +171,56 @@ export class MkvEngine implements PlaybackEngine {
     this.src = src;
     this.host = host;
     this.chunkSize = options?.chunkSize ?? 1024 * 1024;
+  }
+
+  private wakeStreamLoop(): void {
+    if (this.streamWakeResolver) {
+      const resolve = this.streamWakeResolver;
+      this.streamWakeResolver = null;
+      resolve();
+    }
+  }
+
+  private sleepInterruptible(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.streamWakeResolver === wake) {
+          this.streamWakeResolver = null;
+        }
+        resolve();
+      }, ms);
+      const wake = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.streamWakeResolver = wake;
+    });
+  }
+
+  private setCustomAudioSuppression(suppressNativeElementAudio: boolean): void {
+    if (suppressNativeElementAudio) {
+      if (this.video.dataset) {
+        this.video.dataset.customAudioActive = 'true';
+      }
+      this.video.muted = true;
+    } else {
+      if (this.video.dataset) {
+        delete this.video.dataset.customAudioActive;
+      }
+      const userMuted = this.video.dataset?.userMuted === 'true';
+      this.video.muted = userMuted;
+    }
+  }
+
+  private updateActiveSubtitleOverlay(): void {
+    if (!this.activeSubtitleTrackId) return;
+    if (this.subtitleCues.length > 0) {
+      const ct = this.video.currentTime;
+      const active = findActiveCue(this.subtitleCues, ct);
+      this.host.onSubtitleText?.(active ? active.text : null);
+    } else {
+      this.host.onSubtitleText?.(null);
+    }
   }
 
   async attach(startTime: number = 0): Promise<void> {
@@ -237,22 +291,45 @@ export class MkvEngine implements PlaybackEngine {
 
     const codec = (trackInfo.codec || '').toUpperCase();
     const isEac3OrAc3 = codec.includes('AC3') || codec.includes('EAC3');
+    const canRemuxAacInMse =
+      !isEac3OrAc3 &&
+      codec.includes('AAC') &&
+      !!trackMeta &&
+      (!this.sourceBuffer || this.sourceBufferHasAudio);
 
-    if (isEac3OrAc3) {
+    if (!canRemuxAacInMse) {
       this.aacConfig = null;
+      this.setCustomAudioSuppression(true);
       if (!this.eac3Player) {
         const { Eac3AudioPlayer } = await import('./eac3-player.js');
         this.eac3Player = new Eac3AudioPlayer(this.video);
         await this.eac3Player.init();
-        this.hookEac3PlayerEvents();
       } else {
         this.eac3Player.clearQueue();
+      }
+      if (trackMeta) {
+        await this.eac3Player.configureTrack({
+          codecId: trackMeta.codecId,
+          samplingRate: trackMeta.samplingRate,
+          channels: trackMeta.channels,
+          codecPrivate: trackMeta.codecPrivate,
+        });
+      }
+      if (!this.eac3EventsHooked) {
+        this.hookEac3PlayerEvents();
+        this.eac3EventsHooked = true;
+      }
+      this.eac3Player.updateVolume();
+      if (!this.video.paused) {
+        this.eac3Player.onPlay();
       }
     } else {
       if (this.eac3Player) {
         this.eac3Player.destroy();
         this.eac3Player = null;
+        this.eac3EventsHooked = false;
       }
+      this.setCustomAudioSuppression(false);
       if (codec.includes('AAC') && trackMeta) {
         this.aacConfig = parseAacCodecPrivate(
           trackMeta.codecPrivate,
@@ -301,11 +378,13 @@ export class MkvEngine implements PlaybackEngine {
       const hex = (n: number) => n.toString(16).padStart(2, '0');
       const avcCodecStr = `avc1.${hex(this.avcConfig.profileIdc)}${hex(this.avcConfig.profileCompatibility)}${hex(this.avcConfig.levelIdc)}`;
       if (this.aacConfig) {
+        this.sourceBufferHasAudio = true;
         mimeCandidates.push(`video/mp4; codecs="${avcCodecStr}, mp4a.40.2"`);
         mimeCandidates.push('video/mp4; codecs="avc1.640028, mp4a.40.2"');
         mimeCandidates.push('video/mp4; codecs="avc1.4d4028, mp4a.40.2"');
         mimeCandidates.push('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
       } else {
+        this.sourceBufferHasAudio = false;
         mimeCandidates.push(`video/mp4; codecs="${avcCodecStr}"`);
         mimeCandidates.push('video/mp4; codecs="avc1.640028"');
         mimeCandidates.push('video/mp4; codecs="avc1.4d4028"');
@@ -570,15 +649,7 @@ export class MkvEngine implements PlaybackEngine {
 
   private onTimeUpdate = () => {
     this.pruneBuffer();
-    if (this.activeSubtitleTrackId) {
-      if (this.subtitleCues.length > 0) {
-        const ct = this.video.currentTime;
-        const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
-        this.host.onSubtitleText?.(active ? active.text : null);
-      } else {
-        this.host.onSubtitleText?.(null);
-      }
-    }
+    this.updateActiveSubtitleOverlay();
   };
 
   private async startStreaming(startSec: number = 0): Promise<void> {
@@ -634,7 +705,7 @@ export class MkvEngine implements PlaybackEngine {
       if (this.subtitleTracks.length > 0) {
         const defSub = this.subtitleTracks.find((s) => s.isDefault) || this.subtitleTracks[0];
         this.host.onSubtitleTracksDiscovered?.(this.subtitleTracks, defSub?.id);
-        if (defSub) {
+        if (defSub && !this.activeSubtitleTrackId) {
           await this.setSubtitleTrack(defSub.id);
         }
       }
@@ -648,9 +719,8 @@ export class MkvEngine implements PlaybackEngine {
       this.currentByteOffset = this.mkvDemuxer.clusterStartOffset;
 
       if (startSec > 0 && headerInfo.duration > 0 && this.src.size > 0) {
-        const estByte = Math.floor((startSec / headerInfo.duration) * (this.src.size - this.currentByteOffset)) + this.currentByteOffset;
-        this.currentByteOffset = Math.min(estByte, this.src.size - 1);
         this.mkvDemuxer.seek(startSec);
+        this.currentByteOffset = this.mkvDemuxer.currentOffset;
         this.video.currentTime = startSec;
       }
     } catch (err) {
@@ -662,7 +732,7 @@ export class MkvEngine implements PlaybackEngine {
     // Stream clusters and remux to fMP4
     while (!this.isDestroyed && !this.abortCtrl.signal.aborted) {
       if (this.shouldWaitBuffer()) {
-        await new Promise((r) => setTimeout(r, 300));
+        await this.sleepInterruptible(300);
         continue;
       }
 
@@ -718,30 +788,30 @@ export class MkvEngine implements PlaybackEngine {
   private onSeeking = () => {
     if (this.isDestroyed || !this.video) return;
     const targetTime = this.video.currentTime;
+    this.updateActiveSubtitleOverlay();
 
     const ranges = this.video.buffered;
     for (let i = 0; i < ranges.length; i++) {
       if (ranges.start(i) <= targetTime && targetTime <= ranges.end(i)) {
+        this.eac3Player?.onSeek();
         return; // Fast seek within buffered range
       }
     }
 
-    if (this.headerInfo && this.headerInfo.duration > 0 && this.src.size > 0) {
-      const startOff = this.mkvDemuxer?.clusterStartOffset || 0;
-      const ratio = Math.min(0.99, Math.max(0, targetTime / this.headerInfo.duration));
-      const targetByte = Math.floor(ratio * (this.src.size - startOff)) + startOff;
-      this.currentByteOffset = Math.max(startOff, Math.min(targetByte, this.src.size - 1));
+    if (this.headerInfo && this.headerInfo.duration > 0 && this.src.size > 0 && this.mkvDemuxer) {
       this.pendingVideoFrames = [];
       this.pendingAudioFrames = [];
       this.waitingForKeyframe = true;
       this.bufferQueue = [];
-      this.mkvDemuxer?.seek(targetTime);
+      this.mkvDemuxer.seek(targetTime);
+      this.currentByteOffset = this.mkvDemuxer.currentOffset;
       this.eac3Player?.onSeek();
       if (this.sourceBuffer && !this.sourceBuffer.updating) {
         try {
           this.sourceBuffer.abort();
         } catch {}
       }
+      this.wakeStreamLoop();
     }
   };
 
@@ -750,9 +820,53 @@ export class MkvEngine implements PlaybackEngine {
   }
 
   async setAudioTrack(trackId: string): Promise<void> {
+    if (trackId === this.activeAudioTrackId) return;
+    const curTime = this.video.currentTime || 0;
     await this.configureAudioPipeline(trackId);
+
+    if (this.isRemuxingToMp4 && this.avcConfig && this.videoTrackMeta && this.aacConfig && this.sourceBufferHasAudio) {
+      const gen = muxjs.mp4.generator;
+      const mp4Tracks: any[] = [
+        {
+          id: 1,
+          type: 'video',
+          width: this.videoTrackMeta.width || 1920,
+          height: this.videoTrackMeta.height || 1080,
+          duration: 0xffffffff,
+          profileIdc: this.avcConfig.profileIdc,
+          profileCompatibility: this.avcConfig.profileCompatibility,
+          levelIdc: this.avcConfig.levelIdc,
+          sps: this.avcConfig.sps,
+          pps: this.avcConfig.pps,
+        },
+        {
+          id: 2,
+          type: 'audio',
+          channelcount: this.aacConfig.channelcount,
+          samplesize: 16,
+          samplerate: this.aacConfig.samplerate,
+          duration: 0xffffffff,
+          audioobjecttype: this.aacConfig.audioobjecttype,
+          samplingfrequencyindex: this.aacConfig.samplingfrequencyindex,
+        },
+      ];
+      this.pendingVideoFrames = [];
+      this.pendingAudioFrames = [];
+      this.waitingForKeyframe = true;
+      this.bufferQueue = [];
+      if (this.sourceBuffer && !this.sourceBuffer.updating) {
+        try {
+          this.sourceBuffer.abort();
+        } catch {}
+      }
+      const initSeg = gen.initSegment(mp4Tracks);
+      this.queueBuffer(initSeg);
+    }
+
     if (this.mkvDemuxer) {
-      this.mkvDemuxer.seek(this.video.currentTime || 0);
+      this.mkvDemuxer.seek(curTime);
+      this.currentByteOffset = this.mkvDemuxer.currentOffset;
+      this.wakeStreamLoop();
     }
   }
 
@@ -779,16 +893,16 @@ export class MkvEngine implements PlaybackEngine {
     if (!match) return;
     const trackNum = parseInt(match[1], 10);
     const cached = this.mkvDemuxer.getCuesForTrack(trackNum);
-    this.subtitleCues = cached.map((c) => ({
-      start: c.timeSec,
-      end: c.timeSec + (c.durationSec || 3.5),
-      text: c.text,
-    }));
+    this.subtitleCues = cached
+      .map((c) => ({
+        start: c.timeSec,
+        end: c.timeSec + (c.durationSec || 3.5),
+        text: c.text,
+      }))
+      .sort((a, b) => a.start - b.start);
     this.mkvDemuxer.setActiveSubtitleTrack(trackNum);
 
-    const ct = this.video.currentTime;
-    const active = this.subtitleCues.find((c) => ct >= c.start && ct <= c.end);
-    this.host.onSubtitleText?.(active ? active.text : null);
+    this.updateActiveSubtitleOverlay();
 
     this.mkvDemuxer.onSubtitleCue((cue) => {
       if (this.activeSubtitleTrackId !== trackId) return;
@@ -796,12 +910,25 @@ export class MkvEngine implements PlaybackEngine {
       const end = cue.timeSec + (cue.durationSec || 3.5);
       if (!this.subtitleCues.some((c) => Math.abs(c.start - start) < 0.05 && c.text === cue.text)) {
         this.subtitleCues.push({ start, end, text: cue.text });
+        if (
+          this.subtitleCues.length > 1 &&
+          this.subtitleCues[this.subtitleCues.length - 1].start <
+            this.subtitleCues[this.subtitleCues.length - 2].start
+        ) {
+          this.subtitleCues.sort((a, b) => a.start - b.start);
+        }
+      }
+      const ct = this.video.currentTime;
+      if (ct >= start && ct <= end) {
+        this.updateActiveSubtitleOverlay();
       }
     });
   }
 
   destroy(): void {
     this.isDestroyed = true;
+    this.wakeStreamLoop();
+    this.setCustomAudioSuppression(false);
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
@@ -812,6 +939,7 @@ export class MkvEngine implements PlaybackEngine {
     if (this.eac3Player) {
       this.eac3Player.destroy();
       this.eac3Player = null;
+      this.eac3EventsHooked = false;
     }
     this.mkvDemuxer?.destroy();
     this.video.removeEventListener('seeking', this.onSeeking);

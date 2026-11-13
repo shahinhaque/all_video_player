@@ -10,9 +10,11 @@ import {
   readEbmlElement,
   readUint,
   parseMkvHeaders,
+  parseMkvCues,
   parseMkvBlock,
   EBML_ID,
   MkvHeaderInfo,
+  MkvCuePoint,
   TrackMetadata,
 } from './ebml.js';
 
@@ -48,12 +50,21 @@ export class MkvDemuxer {
 
   private isAborted = false;
   private abortCtrl: AbortController = new AbortController();
+  private readAbortCtrl: AbortController = new AbortController();
   private currentByteOffset = 0;
   private firstClusterOffset = 0;
   private residualBuffer: Uint8Array = new Uint8Array(0);
   private currentClusterTimecode = 0;
   private lastDemuxedTimeSec = 0;
   private inClusterSync = false;
+
+  private cues: MkvCuePoint[] = [];
+  private cuesLoaded = false;
+  private clusterIndex: { timeSec: number; byteOffset: number }[] = [];
+  private pendingSeekTimeSec: number | null = null;
+  private seekOvershootRetries = 0;
+  private currentChunkStartOffset = 0;
+  private lastSyncedClusterOffset = 0;
 
   private onVideoFrameCallback: ((chunk: MkvVideoChunk) => void) | null = null;
   private onAudioFrameCallback: ((chunk: MkvAudioChunk) => void) | null = null;
@@ -100,6 +111,26 @@ export class MkvDemuxer {
     }
 
     this.currentByteOffset = this.firstClusterOffset > 0 ? this.firstClusterOffset : 0;
+    this.clusterIndex = [{ timeSec: 0, byteOffset: this.currentByteOffset }];
+
+    // If Cues were located inside the initial probe buffer, parse them immediately
+    if (
+      info.cuesOffset !== undefined &&
+      info.segmentDataOffset !== undefined &&
+      info.cuesOffset >= 0 &&
+      info.cuesOffset < initialBytes.length
+    ) {
+      const parsedCues = parseMkvCues(
+        initialBytes.subarray(info.cuesOffset),
+        info.segmentDataOffset,
+        info.timecodeScale
+      );
+      if (parsedCues.length > 0) {
+        this.cues = parsedCues;
+        this.cuesLoaded = true;
+      }
+    }
+
     return info;
   }
 
@@ -121,6 +152,10 @@ export class MkvDemuxer {
 
   get clusterStartOffset(): number {
     return this.firstClusterOffset;
+  }
+
+  get currentOffset(): number {
+    return this.currentByteOffset;
   }
 
   setActiveVideoTrack(trackNumber: number | null): void {
@@ -153,17 +188,97 @@ export class MkvDemuxer {
   }
 
   seek(targetTimeSec: number): void {
+    this.readAbortCtrl.abort();
+    this.readAbortCtrl = new AbortController();
     this.residualBuffer = new Uint8Array(0);
     this.inClusterSync = false;
-    this.currentClusterTimecode = Math.floor((targetTimeSec * 1e9) / this.timecodeScale);
-    this.lastDemuxedTimeSec = targetTimeSec;
-    if (this.duration > 0 && this.src.size > 0 && targetTimeSec > 0) {
-      const ratio = Math.min(0.99, Math.max(0, targetTimeSec / this.duration));
-      const dataSpan = Math.max(0, this.src.size - this.firstClusterOffset);
-      const targetByte = Math.floor(ratio * dataSpan) + this.firstClusterOffset;
-      this.currentByteOffset = Math.max(this.firstClusterOffset, Math.min(targetByte, this.src.size - 1));
-    } else {
-      this.currentByteOffset = this.firstClusterOffset;
+    const clampedTarget = Math.max(0, targetTimeSec);
+    this.currentClusterTimecode = Math.floor((clampedTarget * 1e9) / this.timecodeScale);
+    this.lastDemuxedTimeSec = clampedTarget;
+    this.pendingSeekTimeSec = clampedTarget;
+    this.seekOvershootRetries = 0;
+    this.currentByteOffset = this.computeSeekByteOffset(clampedTarget);
+  }
+
+  private computeSeekByteOffset(targetTimeSec: number): number {
+    if (targetTimeSec <= 1.0) {
+      return this.firstClusterOffset;
+    }
+
+    // Back off slightly so we capture keyframes and subtitle cues that start just before targetTimeSec
+    const lookupTimeSec = Math.max(0, targetTimeSec - 2.0);
+
+    if (this.cues.length > 0) {
+      let low = 0;
+      let high = this.cues.length - 1;
+      let bestIdx = 0;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (this.cues[mid].timeSec <= lookupTimeSec) {
+          bestIdx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+      const chosen = this.cues[bestIdx];
+      const maxByte = this.src.size > 0 ? this.src.size - 1 : chosen.clusterByteOffset;
+      return Math.max(this.firstClusterOffset, Math.min(chosen.clusterByteOffset, maxByte));
+    }
+
+    if (this.duration > 0 && this.src.size > 0) {
+      // Piece-wise linear interpolation using any already-discovered cluster index points
+      let lowerTime = 0;
+      let lowerByte = this.firstClusterOffset;
+      let upperTime = this.duration;
+      let upperByte = this.src.size;
+
+      for (const pt of this.clusterIndex) {
+        if (pt.timeSec <= lookupTimeSec && pt.timeSec >= lowerTime) {
+          lowerTime = pt.timeSec;
+          lowerByte = pt.byteOffset;
+        }
+        if (pt.timeSec >= lookupTimeSec && pt.timeSec < upperTime) {
+          upperTime = pt.timeSec;
+          upperByte = pt.byteOffset;
+        }
+      }
+
+      const timeSpan = Math.max(0.001, upperTime - lowerTime);
+      const byteSpan = Math.max(0, upperByte - lowerByte);
+      const localRatio = Math.min(0.995, Math.max(0, (lookupTimeSec - lowerTime) / timeSpan));
+      const safetyBackoff = Math.min(512 * 1024, Math.floor((this.src.size - this.firstClusterOffset) * 0.008));
+      const targetByte = Math.floor(lowerByte + localRatio * byteSpan) - safetyBackoff;
+      return Math.max(this.firstClusterOffset, Math.min(targetByte, this.src.size - 1));
+    }
+
+    return this.firstClusterOffset;
+  }
+
+  private async loadCues(signal: AbortSignal): Promise<void> {
+    if (this.cuesLoaded || !this.headerInfo?.cuesOffset || !this.headerInfo.segmentDataOffset) {
+      this.cuesLoaded = true;
+      return;
+    }
+    this.cuesLoaded = true;
+    const cuesOff = this.headerInfo.cuesOffset;
+    if (this.src.size > 0 && cuesOff >= this.src.size) return;
+
+    try {
+      const maxRead = 512 * 1024;
+      const endByte = this.src.size > 0
+        ? Math.min(cuesOff + maxRead - 1, this.src.size - 1)
+        : cuesOff + maxRead - 1;
+      const stream = await this.src.read(cuesOff, endByte, signal);
+      const bytes = await readAll(stream, signal);
+      if (bytes.length > 0) {
+        const parsed = parseMkvCues(bytes, this.headerInfo.segmentDataOffset, this.timecodeScale);
+        if (parsed.length > 0) {
+          this.cues = parsed;
+        }
+      }
+    } catch {
+      // Cues loading is a best-effort optimization; fallback interpolation still works
     }
   }
 
@@ -172,16 +287,35 @@ export class MkvDemuxer {
       return false;
     }
 
+    const activeReadCtrl = this.readAbortCtrl;
+
+    // If a seek just occurred and the MKV header has a Cues index pointer, load Cues once for exact seeking
+    if (
+      this.pendingSeekTimeSec !== null &&
+      !this.cuesLoaded &&
+      this.headerInfo?.cuesOffset !== undefined &&
+      this.src.size > 0 &&
+      this.headerInfo.cuesOffset < this.src.size
+    ) {
+      await this.loadCues(activeReadCtrl.signal);
+      if (activeReadCtrl.signal.aborted || this.isAborted) return false;
+      if (this.cues.length > 0 && this.pendingSeekTimeSec !== null) {
+        this.currentByteOffset = this.computeSeekByteOffset(this.pendingSeekTimeSec);
+      }
+    }
+
+    const chunkStart = this.currentByteOffset;
     const endByte = this.src.size > 0
-      ? Math.min(this.currentByteOffset + chunkSize - 1, this.src.size - 1)
-      : this.currentByteOffset + chunkSize - 1;
+      ? Math.min(chunkStart + chunkSize - 1, this.src.size - 1)
+      : chunkStart + chunkSize - 1;
 
     try {
-      const stream = await this.src.read(this.currentByteOffset, endByte, this.abortCtrl.signal);
-      const data = await readAll(stream, this.abortCtrl.signal);
-      if (data.length === 0) return false;
+      const stream = await this.src.read(chunkStart, endByte, activeReadCtrl.signal);
+      const data = await readAll(stream, activeReadCtrl.signal);
+      if (activeReadCtrl.signal.aborted || this.isAborted || data.length === 0) return false;
 
-      this.currentByteOffset += data.length;
+      this.currentChunkStartOffset = chunkStart;
+      this.currentByteOffset = chunkStart + data.length;
       this.demuxBuffer(data);
       return true;
     } catch {
@@ -190,16 +324,17 @@ export class MkvDemuxer {
   }
 
   public demuxBuffer(chunk: Uint8Array): void {
+    const prevResidualLen = this.residualBuffer.length;
     let combined: Uint8Array;
-    if (this.residualBuffer.length > 0) {
-      if (this.residualBuffer.length > MAX_ELEMENT_SIZE) {
+    if (prevResidualLen > 0) {
+      if (prevResidualLen > MAX_ELEMENT_SIZE) {
         // Prevent unbounded residual growth if stream had corrupted bytes
         this.residualBuffer = new Uint8Array(0);
         combined = chunk;
       } else {
-        combined = new Uint8Array(this.residualBuffer.length + chunk.length);
+        combined = new Uint8Array(prevResidualLen + chunk.length);
         combined.set(this.residualBuffer, 0);
-        combined.set(chunk, this.residualBuffer.length);
+        combined.set(chunk, prevResidualLen);
       }
     } else {
       combined = chunk;
@@ -236,6 +371,10 @@ export class MkvDemuxer {
             firstChild === 0xec
           ) {
             this.inClusterSync = true;
+            this.lastSyncedClusterOffset = Math.max(
+              this.firstClusterOffset,
+              this.currentChunkStartOffset - prevResidualLen + off
+            );
             off = clusterElem.dataOffset;
             continue;
           }
@@ -261,6 +400,10 @@ export class MkvDemuxer {
 
       // Step into next Cluster container
       if (elem.id === EBML_ID.Cluster) {
+        this.lastSyncedClusterOffset = Math.max(
+          this.firstClusterOffset,
+          this.currentChunkStartOffset - prevResidualLen + off
+        );
         off = elem.dataOffset;
         continue;
       }
@@ -309,7 +452,42 @@ export class MkvDemuxer {
           break;
         }
         this.currentClusterTimecode = readUint(combined, elem.dataOffset, elem.dataSize);
-        this.lastDemuxedTimeSec = (this.currentClusterTimecode * this.timecodeScale) / 1e9;
+        const clusterTimeSec = (this.currentClusterTimecode * this.timecodeScale) / 1e9;
+        this.lastDemuxedTimeSec = clusterTimeSec;
+
+        if (
+          this.lastSyncedClusterOffset >= this.firstClusterOffset &&
+          !this.clusterIndex.some((pt) => Math.abs(pt.timeSec - clusterTimeSec) < 0.5)
+        ) {
+          this.clusterIndex.push({
+            timeSec: clusterTimeSec,
+            byteOffset: this.lastSyncedClusterOffset,
+          });
+          this.clusterIndex.sort((a, b) => a.timeSec - b.timeSec);
+        }
+
+        if (this.pendingSeekTimeSec !== null) {
+          const target = this.pendingSeekTimeSec;
+          if (this.cues.length === 0 && this.src.size > 0 && this.seekOvershootRetries < 4) {
+            if (clusterTimeSec > target + 1.5 && this.lastSyncedClusterOffset > this.firstClusterOffset) {
+              // Overshot target time due to VBR bitrate spike: step backward using updated clusterIndex
+              this.seekOvershootRetries++;
+              this.currentByteOffset = this.computeSeekByteOffset(target);
+              this.residualBuffer = new Uint8Array(0);
+              this.inClusterSync = false;
+              return;
+            } else if (clusterTimeSec < target - 20.0) {
+              // Undershot target time by >20s: jump forward using updated clusterIndex
+              this.seekOvershootRetries++;
+              this.currentByteOffset = this.computeSeekByteOffset(target);
+              this.residualBuffer = new Uint8Array(0);
+              this.inClusterSync = false;
+              return;
+            }
+          }
+          this.pendingSeekTimeSec = null;
+        }
+
         off = elem.dataOffset + elem.dataSize;
         continue;
       }
@@ -422,6 +600,9 @@ export class MkvDemuxer {
             }
             if (!list.some((c) => Math.abs(c.timeSec - timeSec) < 0.05 && c.text === text)) {
               list.push(cue);
+              if (list.length > 1 && list[list.length - 1].timeSec < list[list.length - 2].timeSec) {
+                list.sort((a, b) => a.timeSec - b.timeSec);
+              }
             }
             if (this.activeSubtitleTrackNumber === block.trackNumber) {
               this.onSubtitleCueCallback?.(cue);
@@ -434,6 +615,7 @@ export class MkvDemuxer {
 
   destroy(): void {
     this.isAborted = true;
+    this.readAbortCtrl.abort();
     this.abortCtrl.abort();
     this.onVideoFrameCallback = null;
     this.onAudioFrameCallback = null;

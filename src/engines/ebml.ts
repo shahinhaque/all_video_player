@@ -149,6 +149,9 @@ export const EBML_ID = {
   Void: 0xec,
   Segment: 0x18538067,
   SeekHead: 0x114d9b74,
+  Seek: 0x4dbb,
+  SeekID: 0x53ab,
+  SeekPosition: 0x53ac,
   Info: 0x1549a966,
   TimecodeScale: 0x2ad7b1,
   Duration: 0x4489,
@@ -174,6 +177,11 @@ export const EBML_ID = {
   Chapters: 0x1043a770,
   Tags: 0x1254c367,
   Cues: 0x1c53bb6b,
+  CuePoint: 0xbb,
+  CueTime: 0xb3,
+  CueTrackPositions: 0xb7,
+  CueTrack: 0xf7,
+  CueClusterPosition: 0xf1,
   Cluster: 0x1f43b675,
   Timecode: 0xe7,
   Position: 0xa7,
@@ -198,15 +206,23 @@ export interface TrackMetadata {
   samplingRate?: number;
 }
 
+export interface MkvCuePoint {
+  timeSec: number;
+  clusterByteOffset: number;
+  trackNumber?: number;
+}
+
 export interface MkvHeaderInfo {
   timecodeScale: number; // in nanoseconds, default 1,000,000 ns = 1 ms
   duration: number; // in seconds
   tracks: TrackMetadata[];
   firstClusterOffset?: number;
+  segmentDataOffset?: number;
+  cuesOffset?: number;
 }
 
 /**
- * Scans an initial buffer of an MKV file to parse Tracks and Info headers.
+ * Scans an initial buffer of an MKV file to parse Tracks, Info, and SeekHead headers.
  */
 export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
   let offset = 0;
@@ -214,6 +230,8 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
 
   let timecodeScale = 1000000;
   let duration = 0;
+  let segmentDataOffset = 0;
+  let cuesOffset: number | undefined;
   const tracks: TrackMetadata[] = [];
 
   while (offset < len) {
@@ -227,7 +245,45 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
 
     if (elem.id === EBML_ID.Segment) {
       // Step into Segment container
+      segmentDataOffset = elem.dataOffset;
       offset = elem.dataOffset;
+      continue;
+    }
+
+    if (elem.id === EBML_ID.SeekHead) {
+      let shOff = elem.dataOffset;
+      const shEnd = Math.min(len, elem.dataOffset + elem.dataSize);
+      while (shOff < shEnd) {
+        const seekElem = readEbmlElement(data, shOff);
+        if (!seekElem) break;
+        if (seekElem.id === EBML_ID.Seek) {
+          let sOff = seekElem.dataOffset;
+          const sEnd = Math.min(len, seekElem.dataOffset + seekElem.dataSize);
+          let seekId = 0;
+          let seekPos = -1;
+          while (sOff < sEnd) {
+            const sub = readEbmlElement(data, sOff);
+            if (!sub) break;
+            if (sub.id === EBML_ID.SeekID && sub.dataOffset + sub.dataSize <= len) {
+              seekId = readUint(data, sub.dataOffset, sub.dataSize);
+            } else if (sub.id === EBML_ID.SeekPosition && sub.dataOffset + sub.dataSize <= len) {
+              seekPos = readUint(data, sub.dataOffset, sub.dataSize);
+            }
+            sOff = sub.dataOffset + sub.dataSize;
+          }
+          if (seekId === EBML_ID.Cues && seekPos >= 0 && segmentDataOffset > 0) {
+            cuesOffset = segmentDataOffset + seekPos;
+          }
+        }
+        shOff = seekElem.dataOffset + seekElem.dataSize;
+      }
+      offset = elem.dataOffset + elem.dataSize;
+      continue;
+    }
+
+    if (elem.id === EBML_ID.Cues) {
+      cuesOffset = offset;
+      offset = elem.dataOffset + elem.dataSize;
       continue;
     }
 
@@ -366,7 +422,78 @@ export function parseMkvHeaders(data: Uint8Array): MkvHeaderInfo | null {
     duration: durationSec,
     tracks,
     firstClusterOffset: offset > 0 ? offset : undefined,
+    segmentDataOffset: segmentDataOffset > 0 ? segmentDataOffset : undefined,
+    cuesOffset,
   };
+}
+
+/**
+ * Parses a Matroska Cues (0x1C53BB6B) element buffer into sorted CuePoint entries.
+ */
+export function parseMkvCues(
+  data: Uint8Array,
+  segmentDataOffset: number,
+  timecodeScale: number = 1000000
+): MkvCuePoint[] {
+  const cues: MkvCuePoint[] = [];
+  let offset = 0;
+  const len = data.length;
+
+  // Locate Cues element header if present at or near the start of the buffer
+  const root = readEbmlElement(data, 0);
+  let cuesEnd = len;
+  if (root && root.id === EBML_ID.Cues) {
+    offset = root.dataOffset;
+    cuesEnd = Math.min(len, root.dataOffset + root.dataSize);
+  }
+
+  while (offset < cuesEnd) {
+    const elem = readEbmlElement(data, offset);
+    if (!elem || elem.dataOffset + elem.dataSize > cuesEnd) break;
+
+    if (elem.id === EBML_ID.CuePoint) {
+      let cpOff = elem.dataOffset;
+      const cpEnd = elem.dataOffset + elem.dataSize;
+      let cueTime = -1;
+      let clusterPos = -1;
+      let trackNum: number | undefined;
+
+      while (cpOff < cpEnd) {
+        const sub = readEbmlElement(data, cpOff);
+        if (!sub || sub.dataOffset + sub.dataSize > cpEnd) break;
+
+        if (sub.id === EBML_ID.CueTime) {
+          cueTime = readUint(data, sub.dataOffset, sub.dataSize);
+        } else if (sub.id === EBML_ID.CueTrackPositions) {
+          let trkOff = sub.dataOffset;
+          const trkEnd = sub.dataOffset + sub.dataSize;
+          while (trkOff < trkEnd) {
+            const tf = readEbmlElement(data, trkOff);
+            if (!tf || tf.dataOffset + tf.dataSize > trkEnd) break;
+            if (tf.id === EBML_ID.CueClusterPosition) {
+              clusterPos = readUint(data, tf.dataOffset, tf.dataSize);
+            } else if (tf.id === EBML_ID.CueTrack) {
+              trackNum = readUint(data, tf.dataOffset, tf.dataSize);
+            }
+            trkOff = tf.dataOffset + tf.dataSize;
+          }
+        }
+        cpOff = sub.dataOffset + sub.dataSize;
+      }
+
+      if (cueTime >= 0 && clusterPos >= 0) {
+        cues.push({
+          timeSec: (cueTime * timecodeScale) / 1e9,
+          clusterByteOffset: segmentDataOffset + clusterPos,
+          trackNumber: trackNum,
+        });
+      }
+    }
+
+    offset = elem.dataOffset + elem.dataSize;
+  }
+
+  return cues.sort((a, b) => a.timeSec - b.timeSec);
 }
 
 export interface MkvBlock {

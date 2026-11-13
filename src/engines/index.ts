@@ -43,9 +43,11 @@ export async function createPlaybackEngine(
   // Chromium natively demuxes MP4, WebM, and Matroska (.mkv) via <video src>,
   // while NativeEngine handles multi-audio (WASM E-AC-3/AC-3 5.1) and embedded MKV subtitles.
   if (src.directUrl) {
-    const effectiveSrc = sniff.container === 'mkv' ? { ...src, mime: 'video/x-matroska' } : src;
+    if (sniff.container === 'mkv') {
+      src.mime = 'video/x-matroska';
+    }
     return {
-      engine: new NativeEngine(video, effectiveSrc, host),
+      engine: new NativeEngine(video, src, host),
       container: sniff.container.toUpperCase(),
     };
   }

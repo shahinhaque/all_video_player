@@ -139,6 +139,40 @@ describe('Companion Subtitle Detection & Matching', () => {
     expect(videos[1].subtitles).toHaveLength(1);
     expect(videos[1].subtitles?.[0].name).toBe('Episode 02.srt');
   });
+
+  it('isolates subtitles across playlist items with similar prefixes or different folders', () => {
+    const videos: MediaItem[] = [
+      { id: 'http://server/s1/Episode 1.mkv', name: 'Episode 1.mkv', size: 0, provider: 'http', ref: { url: 'http://server/s1/Episode 1.mkv' } },
+      { id: 'http://server/s1/Episode 10.mkv', name: 'Episode 10.mkv', size: 0, provider: 'http', ref: { url: 'http://server/s1/Episode 10.mkv' } },
+      { id: 'http://server/s1/Episode 1.Extended.mkv', name: 'Episode 1.Extended.mkv', size: 0, provider: 'http', ref: { url: 'http://server/s1/Episode 1.Extended.mkv' } },
+      { id: 'http://server/s2/Episode 1.mkv', name: 'Episode 1.mkv', size: 0, provider: 'http', ref: { url: 'http://server/s2/Episode 1.mkv' } },
+    ];
+
+    const subtitles: SubtitleTrackInfo[] = [
+      { id: 'http://server/s1/Episode 1.en.srt', name: 'Episode 1.en.srt', label: '', srclang: '', provider: 'http', ref: { url: 'http://server/s1/Episode 1.en.srt' } },
+      { id: 'http://server/s1/Episode 10.srt', name: 'Episode 10.srt', label: '', srclang: '', provider: 'http', ref: { url: 'http://server/s1/Episode 10.srt' } },
+      { id: 'http://server/s1/Episode 1.Extended.srt', name: 'Episode 1.Extended.srt', label: '', srclang: '', provider: 'http', ref: { url: 'http://server/s1/Episode 1.Extended.srt' } },
+      { id: 'http://server/s2/Subs/Episode 1.hi.srt', name: 'Episode 1.hi.srt', label: '', srclang: '', provider: 'http', ref: { url: 'http://server/s2/Subs/Episode 1.hi.srt' } },
+    ];
+
+    pairSubtitlesWithVideos(videos, subtitles);
+
+    // s1/Episode 1.mkv only gets s1/Episode 1.en.srt (not Episode 10.srt, not Episode 1.Extended.srt, not s2's subtitle)
+    expect(videos[0].subtitles).toHaveLength(1);
+    expect(videos[0].subtitles?.[0].id).toBe('http://server/s1/Episode 1.en.srt');
+
+    // s1/Episode 10.mkv only gets s1/Episode 10.srt
+    expect(videos[1].subtitles).toHaveLength(1);
+    expect(videos[1].subtitles?.[0].id).toBe('http://server/s1/Episode 10.srt');
+
+    // s1/Episode 1.Extended.mkv only gets s1/Episode 1.Extended.srt
+    expect(videos[2].subtitles).toHaveLength(1);
+    expect(videos[2].subtitles?.[0].id).toBe('http://server/s1/Episode 1.Extended.srt');
+
+    // s2/Episode 1.mkv only gets s2/Subs/Episode 1.hi.srt
+    expect(videos[3].subtitles).toHaveLength(1);
+    expect(videos[3].subtitles?.[0].id).toBe('http://server/s2/Subs/Episode 1.hi.srt');
+  });
 });
 
 describe('Timed Cues Parsing', () => {

@@ -5,7 +5,7 @@ import { createPlaybackEngine } from '../engines/index.js';
 import { PlaybackEngine, MediaItem, SubtitleTrackInfo, RangeByteSource, AudioTrackInfo, EngineHost } from '../core/types.js';
 import { formatTime, formatBytes, readAll } from '../lib/util.js';
 import { toPlayerError } from '../core/errors.js';
-import { createSubtitleTrackUrl, isSubtitleName, parseSubtitlesToCues, findActiveCue, SubtitleCue } from '../lib/subtitles.js';
+import { isSubtitleName, parseSubtitlesToCues, findActiveCue, SubtitleCue } from '../lib/subtitles.js';
 import { PrefetchedByteSource } from '../lib/network.js';
 import { ext, getExtensionPermissions, sendExtensionMessage } from '../lib/browser.js';
 
@@ -104,6 +104,8 @@ class PlayerController {
   private hideControlsTimer: number | null = null;
   private savePositionInterval: number | null = null;
   private activeSubTrack: HTMLTrackElement | null = null;
+  private activeSubTrackUrl: string | null = null;
+  private playSessionId = 0;
   private prefetchedNext: {
     itemId: string;
     source: RangeByteSource;
@@ -176,8 +178,41 @@ class PlayerController {
     }
   }
 
+  private clearCurrentSubtitlesAndTracks(): void {
+    this.activeCues = [];
+    this.currentAudioTracks = [];
+    this.activeAudioTrackId = null;
+    this.currentSubtitleTracks = [];
+    this.activeSubtitleTrackId = null;
+    this.loadedSubtitleContents.clear();
+    this.displaySubtitle(null);
+    this.btnCc?.classList.remove('active');
+
+    if (this.activeSubTrack) {
+      this.activeSubTrack.remove();
+      this.activeSubTrack = null;
+    }
+    this.video.querySelectorAll('track').forEach((t) => t.remove());
+    if (this.activeSubTrackUrl) {
+      try {
+        URL.revokeObjectURL(this.activeSubTrackUrl);
+      } catch {}
+      this.activeSubTrackUrl = null;
+    }
+    if (this.video.textTracks) {
+      for (let i = 0; i < this.video.textTracks.length; i++) {
+        this.video.textTracks[i].oncuechange = null;
+        this.video.textTracks[i].mode = 'disabled';
+      }
+    }
+    if (this.video.dataset) {
+      delete this.video.dataset.customAudioActive;
+    }
+  }
+
   async playItem(item: MediaItem | undefined): Promise<void> {
     if (!item || !this.playlistManager) return;
+    const sessionId = ++this.playSessionId;
     this.showBuffering(true);
     this.currentTitle.textContent = item.name;
     this.currentTitle.title = item.name;
@@ -187,13 +222,14 @@ class PlayerController {
     if (this.alertToast) this.alertToast.hidden = true;
     if (this.warningBanner) this.warningBanner.hidden = true;
 
-    // Clean up previous subtitle track
-    if (this.activeSubTrack) {
-      this.activeSubTrack.remove();
-      this.activeSubTrack = null;
-      this.btnCc.classList.remove('active');
+    // Clean up previous engine first so it cannot emit stale track/cue events
+    if (this.currentEngine) {
+      this.currentEngine.destroy();
+      this.currentEngine = null;
     }
-    this.displaySubtitle(null);
+
+    // Clean up all previous subtitle and audio tracks from earlier playlist items
+    this.clearCurrentSubtitlesAndTracks();
 
     // Reset preview frame when playing new item
     if (this.drivePreviewFrame) {
@@ -201,12 +237,6 @@ class PlayerController {
       this.drivePreviewFrame.src = 'about:blank';
     }
     this.video.hidden = false;
-
-    // Clean up previous engine
-    if (this.currentEngine) {
-      this.currentEngine.destroy();
-      this.currentEngine = null;
-    }
 
     if (item.provider === 'youtube') {
       this.activateYouTubePreview(item);
@@ -217,6 +247,7 @@ class PlayerController {
       try {
         await sendExtensionMessage({ type: 'SUPPRESS_DOWNLOAD_MANAGERS' });
       } catch {}
+      if (sessionId !== this.playSessionId) return;
 
       let source: RangeByteSource;
       if (this.prefetchedNext && this.prefetchedNext.itemId === item.id) {
@@ -231,16 +262,22 @@ class PlayerController {
         if (!provider) throw new Error(`Provider not found: ${item.provider}`);
         source = await provider.open(item);
       }
+      if (sessionId !== this.playSessionId) return;
+
       this.currentAudioTracks = [];
       this.activeAudioTrackId = null;
-      this.currentSubtitleTracks = item.subtitles ? [...item.subtitles] : [];
+      this.currentSubtitleTracks = item.subtitles ? item.subtitles.map((s) => ({ ...s })) : [];
       this.activeSubtitleTrackId = null;
       this.renderAudioTracksMenu();
       this.renderSubtitleTracksMenu();
 
       const host: EngineHost = {
-        warn: (msg: string) => this.showWarning(msg),
+        warn: (msg: string) => {
+          if (sessionId !== this.playSessionId) return;
+          this.showWarning(msg);
+        },
         fail: (err: unknown) => {
+          if (sessionId !== this.playSessionId) return;
           this.showBuffering(false);
           const pe = toPlayerError(err);
           // If native video playback failed on Google Drive, fallback to Drive preview player
@@ -252,26 +289,29 @@ class PlayerController {
           this.showAlert(pe.message);
         },
         onAudioTracksDiscovered: (tracks: AudioTrackInfo[], selectedId?: string) => {
-          this.currentAudioTracks = tracks;
+          if (sessionId !== this.playSessionId) return;
+          this.currentAudioTracks = tracks.map((t) => ({ ...t }));
           this.activeAudioTrackId = selectedId || (tracks[0] ? tracks[0].id : null);
           this.renderAudioTracksMenu();
-          if (tracks.length > 1) {
-            this.showAlert(`Discovered ${tracks.length} audio tracks (Click ♫ icon to change).`);
-          }
         },
         onSubtitleTracksDiscovered: (tracks: SubtitleTrackInfo[], selectedId?: string) => {
+          if (sessionId !== this.playSessionId) return;
           for (const trk of tracks) {
             if (!this.currentSubtitleTracks.some((s) => s.id === trk.id)) {
-              this.currentSubtitleTracks.push(trk);
+              this.currentSubtitleTracks.push({ ...trk });
             }
           }
           if (selectedId && !this.activeSubtitleTrackId) {
-            this.selectSubtitleTrack(selectedId);
+            void this.selectSubtitleTrack(selectedId, sessionId);
           } else {
+            if (this.activeSubtitleTrackId && !this.activeSubtitleTrackId.startsWith('mkv-sub-')) {
+              void this.currentEngine?.setSubtitleTrack?.(null);
+            }
             this.renderSubtitleTracksMenu();
           }
         },
         onSubtitleText: (text: string | null) => {
+          if (sessionId !== this.playSessionId) return;
           if (this.activeSubtitleTrackId?.startsWith('mkv-sub-')) {
             this.displaySubtitle(text);
           }
@@ -281,6 +321,10 @@ class PlayerController {
       const { engine, container } = await createPlaybackEngine(this.video, source, host, {
         chunkSize: this.preferredChunkSize,
       });
+      if (sessionId !== this.playSessionId) {
+        engine.destroy();
+        return;
+      }
       this.currentEngine = engine;
 
       this.codecPill.hidden = false;
@@ -296,17 +340,20 @@ class PlayerController {
       } catch {
         savedSec = await this.playlistManager.getSavedPosition(item);
       }
+      if (sessionId !== this.playSessionId) return;
       await engine.attach(savedSec);
+      if (sessionId !== this.playSessionId) return;
 
       // Re-apply saved mute/volume state after attaching media source
       this.applySavedVolumeState();
 
       this.discoverNativeTextTracks();
 
-      // Auto-load companion subtitles if present
+      // Auto-load companion subtitles if present for this specific video item
       if (item.subtitles && item.subtitles.length > 0) {
-        await this.selectSubtitleTrack(item.subtitles[0].id);
+        await this.selectSubtitleTrack(item.subtitles[0].id, sessionId);
       }
+      if (sessionId !== this.playSessionId) return;
 
       this.video.play().catch(() => {
         // Autoplay policy might require interaction
@@ -315,10 +362,13 @@ class PlayerController {
       this.setupMediaSession();
       this.startPositionSaver();
     } catch (err) {
+      if (sessionId !== this.playSessionId) return;
       const pe = toPlayerError(err);
       this.showAlert(pe.message);
     } finally {
-      this.showBuffering(false);
+      if (sessionId === this.playSessionId) {
+        this.showBuffering(false);
+      }
     }
   }
 
@@ -383,6 +433,7 @@ class PlayerController {
 
     // Time & Progress update
     this.video.addEventListener('timeupdate', () => this.onTimeUpdate());
+    this.video.addEventListener('seeking', () => this.onTimeUpdate());
     this.video.addEventListener('seeked', () => this.onTimeUpdate());
     this.video.addEventListener('progress', () => this.onProgress());
     this.video.addEventListener('waiting', () => this.showBuffering(true));
@@ -661,7 +712,6 @@ class PlayerController {
     if (!this.playlistManager) return;
 
     if (this.playlistManager.count <= 1) {
-      this.showAlert('Only 1 video in current playlist.');
       return;
     }
 
@@ -672,7 +722,6 @@ class PlayerController {
       // Reached the end of playlist -> loop back to first track
       const firstItem = this.playlistManager.setIndex(0);
       if (firstItem) {
-        this.showAlert('Reached end of playlist. Restarting from first video.');
         this.playItem(firstItem);
       }
     }
@@ -683,7 +732,6 @@ class PlayerController {
 
     if (this.playlistManager.count <= 1) {
       this.video.currentTime = 0;
-      this.showAlert('Single video — restarted from beginning.');
       return;
     }
 
@@ -700,7 +748,6 @@ class PlayerController {
       // At the start -> loop to last video in playlist
       const lastItem = this.playlistManager.setIndex(this.playlistManager.count - 1);
       if (lastItem) {
-        this.showAlert('Looping to last video in playlist.');
         this.playItem(lastItem);
       }
     }
@@ -848,6 +895,11 @@ class PlayerController {
     this.timelineTooltip.style.left = `${pos * 100}%`;
     this.timelineTooltip.textContent = formatTime(targetTime);
 
+    if (this.activeCues.length > 0) {
+      const active = findActiveCue(this.activeCues, targetTime);
+      this.displaySubtitle(active ? active.text : null);
+    }
+
     return targetTime;
   }
 
@@ -872,19 +924,21 @@ class PlayerController {
     }
   }
 
-  private applySavedVolumeState(): void {
-    if (this.isMuted) {
-      this.video.muted = true;
-      this.video.defaultMuted = true;
-      this.video.volume = 0;
-      this.volumeSlider.value = '0';
-    } else {
-      const vol = this.lastVolume > 0 ? this.lastVolume : 1;
-      this.video.muted = false;
-      this.video.defaultMuted = false;
-      this.video.volume = vol;
-      this.volumeSlider.value = String(vol);
+  private syncVideoVolumeDataset(): void {
+    const vol = this.isMuted ? 0 : (this.lastVolume > 0 ? this.lastVolume : 1);
+    const forceMuteNative = this.video.dataset?.customAudioActive === 'true';
+    if (this.video.dataset) {
+      this.video.dataset.userMuted = String(this.isMuted);
+      this.video.dataset.userVolume = String(vol);
     }
+    this.video.muted = this.isMuted || forceMuteNative;
+    this.video.defaultMuted = this.isMuted || forceMuteNative;
+    this.video.volume = vol;
+    this.volumeSlider.value = String(vol);
+  }
+
+  private applySavedVolumeState(): void {
+    this.syncVideoVolumeDataset();
     this.updateVolumeIcons();
   }
 
@@ -893,42 +947,30 @@ class PlayerController {
     if (clamped > 0) {
       this.lastVolume = clamped;
       this.isMuted = false;
-      this.video.muted = false;
-      this.video.defaultMuted = false;
-      this.video.volume = clamped;
-      this.volumeSlider.value = String(clamped);
     } else {
       this.isMuted = true;
-      this.video.muted = true;
-      this.video.defaultMuted = true;
-      this.video.volume = 0;
-      this.volumeSlider.value = '0';
     }
+    this.syncVideoVolumeDataset();
     this.syncIframeMuteState();
     this.updateVolumeIcons();
     ext.storage.local.set({ volume: this.lastVolume, muted: this.isMuted }).catch(() => {});
   }
 
   private toggleMute(): void {
-    const currentlyMuted = this.isMuted || this.video.muted || this.video.volume === 0;
+    const customAudioActive = this.video.dataset?.customAudioActive === 'true';
+    const currentlyMuted =
+      this.isMuted || (!customAudioActive && (this.video.muted || this.video.volume === 0));
     if (!currentlyMuted) {
       if (this.video.volume > 0) {
         this.lastVolume = this.video.volume;
       }
       this.isMuted = true;
-      this.video.muted = true;
-      this.video.defaultMuted = true;
-      this.video.volume = 0;
-      this.volumeSlider.value = '0';
     } else {
       const restoreVol = this.lastVolume > 0 ? this.lastVolume : 1;
       this.lastVolume = restoreVol;
       this.isMuted = false;
-      this.video.muted = false;
-      this.video.defaultMuted = false;
-      this.video.volume = restoreVol;
-      this.volumeSlider.value = String(restoreVol);
     }
+    this.syncVideoVolumeDataset();
     this.syncIframeMuteState();
     this.updateVolumeIcons();
     ext.storage.local.set({ volume: this.lastVolume, muted: this.isMuted }).catch(() => {});
@@ -947,7 +989,9 @@ class PlayerController {
   }
 
   private updateVolumeIcons(): void {
-    const muted = this.isMuted || this.video.muted || this.video.volume === 0;
+    const customAudioActive = this.video.dataset?.customAudioActive === 'true';
+    const muted =
+      this.isMuted || (!customAudioActive && (this.video.muted || this.video.volume === 0));
     this.setElementHidden(this.iconVolHigh, muted);
     this.setElementHidden(this.iconVolMute, !muted);
     this.btnMute?.setAttribute('aria-label', muted ? 'Unmute (m)' : 'Mute (m)');
@@ -1105,11 +1149,14 @@ class PlayerController {
   private async selectAudioTrack(trackId: string): Promise<void> {
     this.activeAudioTrackId = trackId;
     this.renderAudioTracksMenu();
-    if (this.currentEngine?.setAudioTrack) {
-      await this.currentEngine.setAudioTrack(trackId);
+    try {
+      if (this.currentEngine?.setAudioTrack) {
+        await this.currentEngine.setAudioTrack(trackId);
+      }
+    } catch (err) {
+      const pe = toPlayerError(err);
+      this.showAlert(`Failed to switch audio track: ${pe.message}`);
     }
-    const trk = this.currentAudioTracks.find((t) => t.id === trackId);
-    this.showAlert(`Audio track: ${trk ? trk.label : trackId}`);
   }
 
   private renderSubtitleTracksMenu(): void {
@@ -1160,6 +1207,12 @@ class PlayerController {
 
   private discoverNativeTextTracks(): void {
     if (!this.video.textTracks) return;
+    // MKV subtitles are discovered via MkvDemuxer; skip native textTracks on MKV to prevent duplicate/stale entries
+    const curName = (this.playlistManager?.currentItem?.name || '').toLowerCase();
+    if (curName.endsWith('.mkv') || this.currentEngine?.kind === 'mkv') {
+      return;
+    }
+
     let added = false;
     for (let i = 0; i < this.video.textTracks.length; i++) {
       const trk = this.video.textTracks[i];
@@ -1183,7 +1236,9 @@ class PlayerController {
     }
   }
 
-  private async selectSubtitleTrack(trackId: string | null): Promise<void> {
+  private async selectSubtitleTrack(trackId: string | null, expectedSessionId?: number): Promise<void> {
+    if (expectedSessionId !== undefined && expectedSessionId !== this.playSessionId) return;
+    const sessionId = expectedSessionId ?? this.playSessionId;
     this.activeSubtitleTrackId = trackId;
 
     if (!trackId) {
@@ -1193,75 +1248,102 @@ class PlayerController {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;
       }
+      if (this.activeSubTrackUrl) {
+        try {
+          URL.revokeObjectURL(this.activeSubTrackUrl);
+        } catch {}
+        this.activeSubTrackUrl = null;
+      }
       if (this.video.textTracks) {
         for (let i = 0; i < this.video.textTracks.length; i++) {
+          this.video.textTracks[i].oncuechange = null;
           this.video.textTracks[i].mode = 'disabled';
         }
       }
       if (this.currentEngine?.setSubtitleTrack) {
         await this.currentEngine.setSubtitleTrack(null);
       }
+      if (sessionId !== this.playSessionId) return;
       this.renderSubtitleTracksMenu();
-      this.showAlert('Subtitles turned off.');
       return;
     }
 
     const trk = this.currentSubtitleTracks.find((s) => s.id === trackId);
     if (!trk) return;
 
-    if (trackId.startsWith('mkv-sub-')) {
-      // Embedded MKV subtitle track
-      this.activeCues = [];
-      if (this.activeSubTrack) {
-        this.activeSubTrack.remove();
-        this.activeSubTrack = null;
-      }
-      if (this.video.textTracks) {
-        for (let i = 0; i < this.video.textTracks.length; i++) {
-          this.video.textTracks[i].mode = 'disabled';
+    try {
+      if (trackId.startsWith('mkv-sub-')) {
+        // Embedded MKV subtitle track
+        this.activeCues = [];
+        if (this.activeSubTrack) {
+          this.activeSubTrack.remove();
+          this.activeSubTrack = null;
         }
-      }
-      if (this.currentEngine?.setSubtitleTrack) {
-        await this.currentEngine.setSubtitleTrack(trackId);
-      }
-    } else if (trackId.startsWith('native-texttrack-')) {
-      // Embedded native HTML5 video track (MP4/WebM)
-      this.activeCues = [];
-      if (this.activeSubTrack) {
-        this.activeSubTrack.remove();
-        this.activeSubTrack = null;
-      }
-      if (this.currentEngine?.setSubtitleTrack) {
-        await this.currentEngine.setSubtitleTrack(null);
-      }
-      const idx = parseInt(trk.ref?.nativeTrackIndex || '-1', 10);
-      if (idx >= 0 && this.video.textTracks && this.video.textTracks[idx]) {
-        for (let i = 0; i < this.video.textTracks.length; i++) {
-          this.video.textTracks[i].mode = i === idx ? 'hidden' : 'disabled';
+        if (this.activeSubTrackUrl) {
+          try {
+            URL.revokeObjectURL(this.activeSubTrackUrl);
+          } catch {}
+          this.activeSubTrackUrl = null;
         }
-        const nativeTrk = this.video.textTracks[idx];
-        nativeTrk.oncuechange = () => {
-          if (this.activeSubtitleTrackId === trackId) {
-            const cue = nativeTrk.activeCues?.[0] as VTTCue;
-            this.displaySubtitle(cue ? cue.text : null);
+        if (this.video.textTracks) {
+          for (let i = 0; i < this.video.textTracks.length; i++) {
+            this.video.textTracks[i].oncuechange = null;
+            this.video.textTracks[i].mode = 'disabled';
           }
-        };
+        }
+        if (this.currentEngine?.setSubtitleTrack) {
+          await this.currentEngine.setSubtitleTrack(trackId);
+        }
+      } else if (trackId.startsWith('native-texttrack-')) {
+        // Embedded native HTML5 video track (MP4/WebM)
+        this.activeCues = [];
+        if (this.activeSubTrack) {
+          this.activeSubTrack.remove();
+          this.activeSubTrack = null;
+        }
+        if (this.activeSubTrackUrl) {
+          try {
+            URL.revokeObjectURL(this.activeSubTrackUrl);
+          } catch {}
+          this.activeSubTrackUrl = null;
+        }
+        if (this.currentEngine?.setSubtitleTrack) {
+          await this.currentEngine.setSubtitleTrack(null);
+        }
+        const idx = parseInt(trk.ref?.nativeTrackIndex || '-1', 10);
+        if (idx >= 0 && this.video.textTracks && this.video.textTracks[idx]) {
+          for (let i = 0; i < this.video.textTracks.length; i++) {
+            this.video.textTracks[i].mode = i === idx ? 'hidden' : 'disabled';
+          }
+          const nativeTrk = this.video.textTracks[idx];
+          nativeTrk.oncuechange = () => {
+            if (sessionId === this.playSessionId && this.activeSubtitleTrackId === trackId) {
+              const cue = nativeTrk.activeCues?.[0] as VTTCue;
+              this.displaySubtitle(cue ? cue.text : null);
+            }
+          };
+        }
+      } else {
+        // Companion external or uploaded subtitle
+        if (this.currentEngine?.setSubtitleTrack) {
+          await this.currentEngine.setSubtitleTrack(null);
+        }
+        await this.loadExternalSubtitle(trk, sessionId);
       }
-    } else {
-      // Companion external or uploaded subtitle
-      if (this.currentEngine?.setSubtitleTrack) {
-        await this.currentEngine.setSubtitleTrack(null);
-      }
-      await this.loadExternalSubtitle(trk);
+    } catch (err) {
+      const pe = toPlayerError(err);
+      this.showAlert(`Failed to switch subtitles: ${pe.message}`);
     }
 
+    if (sessionId !== this.playSessionId) return;
     this.renderSubtitleTracksMenu();
-    this.showAlert(`Subtitles: ${trk.label || trk.name}`);
   }
 
   private async attachSubtitleFile(file: File): Promise<void> {
+    const sessionId = this.playSessionId;
     try {
       const text = await file.text();
+      if (sessionId !== this.playSessionId) return;
       const customId = `uploaded-${Date.now()}`;
 
       // Persist in local provider memory
@@ -1277,14 +1359,14 @@ class PlayerController {
         ref: { localId: customId },
       };
       this.currentSubtitleTracks.push(newSub);
-      await this.selectSubtitleTrack(customId);
-      this.showAlert(`Loaded subtitles: ${file.name}`);
+      await this.selectSubtitleTrack(customId, sessionId);
     } catch {
       this.showAlert('Failed to parse subtitle file.');
     }
   }
 
-  private async loadExternalSubtitle(subTrack: SubtitleTrackInfo): Promise<void> {
+  private async loadExternalSubtitle(subTrack: SubtitleTrackInfo, expectedSessionId?: number): Promise<void> {
+    const sessionId = expectedSessionId ?? this.playSessionId;
     try {
       let text = this.loadedSubtitleContents.get(subTrack.id);
 
@@ -1303,9 +1385,12 @@ class PlayerController {
         const maxLen = subSource.size > 0 ? subSource.size - 1 : 2 * 1024 * 1024;
         const stream = await subSource.read(0, maxLen);
         const bytes = await readAll(stream);
+        if (sessionId !== this.playSessionId || this.activeSubtitleTrackId !== subTrack.id) return;
         text = new TextDecoder('utf-8').decode(bytes);
         this.loadedSubtitleContents.set(subTrack.id, text);
       }
+
+      if (sessionId !== this.playSessionId || this.activeSubtitleTrackId !== subTrack.id) return;
 
       const lower = subTrack.name.toLowerCase();
       const fmt = lower.endsWith('.srt') ? 'srt' : (lower.endsWith('.ass') || lower.endsWith('.ssa')) ? 'ass' : 'vtt';
@@ -1313,30 +1398,22 @@ class PlayerController {
       // Parse cues for high-performance direct on-screen overlay
       this.activeCues = parseSubtitlesToCues(text, fmt);
 
-      // Check if cue matches current playback time immediately
+      // Check if cue matches current playback time immediately (using binary search)
       const ct = this.video.currentTime;
-      const active = this.activeCues.find((c) => ct >= c.start && ct <= c.end);
+      const active = findActiveCue(this.activeCues, ct);
       this.displaySubtitle(active ? active.text : null);
 
-      // Also attach native <track>
       if (this.activeSubTrack) {
         this.activeSubTrack.remove();
         this.activeSubTrack = null;
       }
-
-      const trackUrl = createSubtitleTrackUrl(text, fmt);
-      const track = document.createElement('track');
-      track.kind = 'subtitles';
-      track.label = subTrack.label || subTrack.name;
-      track.srclang = subTrack.srclang || 'en';
-      track.src = trackUrl;
-      track.default = true;
-
-      this.video.appendChild(track);
-      this.activeSubTrack = track;
-      if (track.track) {
-        track.track.mode = 'hidden';
+      if (this.activeSubTrackUrl) {
+        try {
+          URL.revokeObjectURL(this.activeSubTrackUrl);
+        } catch {}
+        this.activeSubTrackUrl = null;
       }
+
       this.btnCc.classList.add('active');
     } catch (e) {
       console.warn('Failed to auto-load subtitle:', e);
@@ -1350,10 +1427,9 @@ class PlayerController {
     if (mediaFiles.length > 0) {
       const playlist = createLocalPlaylist(files);
       if (append && this.playlistManager && this.playlistManager.count > 0) {
-        const added = this.playlistManager.addItems(playlist.items);
+        this.playlistManager.addItems(playlist.items);
         this.renderPlaylist();
         this.updatePlaylistUI();
-        this.showAlert(`Added ${added} video(s) to playlist.`);
       } else {
         this.playlistManager = new PlaylistManager(playlist);
         this.renderPlaylist();
@@ -1409,15 +1485,13 @@ class PlayerController {
       }
 
       if (this.playlistManager && this.playlistManager.count > 0) {
-        const count = this.playlistManager.addItems(playlist.items);
+        this.playlistManager.addItems(playlist.items);
         this.renderPlaylist();
         this.updatePlaylistUI();
-        this.showAlert(`Added ${count} video(s) from "${playlist.title || 'folder'}" to playlist.`);
       } else {
         this.playlistManager = new PlaylistManager(playlist);
         this.renderPlaylist();
         this.playItem(this.playlistManager.currentItem);
-        this.showAlert(`Loaded ${playlist.items.length} video(s) from "${playlist.title || 'folder'}".`);
       }
 
       if (this.inputPlaylistUrl) {
