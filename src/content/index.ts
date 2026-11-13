@@ -94,7 +94,7 @@ function injectMegaInlineButtons(): void {
     const playBtn = document.createElement('button');
     playBtn.className = 'cloudplay-inline-btn';
     playBtn.textContent = '▶ Play';
-    playBtn.title = 'Play in CloudPlay';
+    playBtn.title = 'Play in Rook Player';
     playBtn.style.cssText = `
       display: inline-flex;
       align-items: center;
@@ -169,7 +169,7 @@ function toggleMegaVideoDrawer(videos: DetectedVideo[]): void {
   `;
   header.innerHTML = `
     <div>
-      <div style="font-weight: 700; font-size: 15px; color: #fff;">CloudPlay • Video List</div>
+      <div style="font-weight: 700; font-size: 15px; color: #fff;">Rook Player • Video List</div>
       <div style="font-size: 12px; color: #9ca3af;">${videos.length} video(s) found on page</div>
     </div>
     <button id="cloudplay-drawer-close" style="background:transparent; border:none; color:#9ca3af; font-size:20px; cursor:pointer;">&times;</button>
@@ -284,11 +284,11 @@ function injectFloatingButton(): void {
 
   let btn = document.getElementById('cloudplay-floating-btn') as HTMLButtonElement;
   const videos = isMega ? detectMegaVideosOnPage() : [];
-  let label = '▶ Play in CloudPlay';
+  let label = '▶ Play in Rook Player';
   if (isMega && videos.length > 0) {
-    label = `▶ Play in CloudPlay (${videos.length} videos)`;
+    label = `▶ Play in Rook Player (${videos.length} videos)`;
   } else if (isYouTube) {
-    label = '▶ Open in CloudPlay';
+    label = '▶ Open in Rook Player';
   }
 
   if (!btn) {
@@ -518,7 +518,7 @@ function injectInPageContextMenu(): void {
           box-sizing: border-box;
           transition: background-color 0.12s ease;
         `;
-        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:10px;">▶</span> <span>Play in CloudPlay</span>`;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:10px;">▶</span> <span>Play in Rook Player</span>`;
 
         companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = '#f1f3f4'; });
         companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = '#ffffff'; });
@@ -583,7 +583,7 @@ function injectInPageContextMenu(): void {
           box-sizing: border-box;
           transition: background-color 0.12s ease;
         `;
-        companion.innerHTML = `<span style="color:#6366f1; font-size:13px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in CloudPlay</span>`;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:13px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in Rook Player</span>`;
         companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = 'rgba(60, 60, 60, 0.95)'; });
         companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = 'rgba(28, 28, 28, 0.95)'; });
         companion.addEventListener('click', (e) => {
@@ -634,7 +634,7 @@ function injectInPageContextMenu(): void {
       font-size: 13px;
       color: #fff;
     `;
-    item.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in CloudPlay</span>`;
+    item.innerHTML = `<span style="color:#6366f1; font-weight:bold;">▶</span> <span>Play in Rook Player</span>`;
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -676,7 +676,7 @@ function injectInPageContextMenu(): void {
           box-sizing: border-box;
           transition: background-color 0.12s ease;
         `;
-        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in CloudPlay</span>`;
+        companion.innerHTML = `<span style="color:#6366f1; font-size:14px; font-weight:bold; margin-right:8px;">▶</span> <span>Play in Rook Player</span>`;
         companion.addEventListener('mouseenter', () => { companion.style.backgroundColor = '#f3f2f1'; });
         companion.addEventListener('mouseleave', () => { companion.style.backgroundColor = '#ffffff'; });
         companion.addEventListener('click', (e) => {
@@ -737,7 +737,7 @@ function showInPageModal(targetUrl: string): void {
   const isYouTube = location.hostname.includes('youtube.com') || targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
 
   let embedUrl = targetUrl;
-  let title = 'CloudPlay Player';
+  let title = 'Rook Player';
 
   if (isGDrive) {
     const fileId = extractDriveFileId(targetUrl);
@@ -893,7 +893,7 @@ function showInPageModal(targetUrl: string): void {
   header.className = 'header';
   header.innerHTML = `
     <div class="brand-group">
-      <span class="badge">CloudPlay</span>
+      <span class="badge">Rook Player</span>
       <span class="title" title="${title}">${title}</span>
     </div>
     <div class="actions">

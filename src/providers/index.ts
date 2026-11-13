@@ -32,7 +32,7 @@ export async function resolveUrl(inputUrl: string): Promise<Playlist> {
   if (!provider) {
     throw new PlayerError(
       'unsupported',
-      'Unsupported link provider. CloudPlay currently supports MEGA, Google Drive, and OneDrive.'
+      'Unsupported link provider. Rook Player currently supports MEGA, Google Drive, and OneDrive.'
     );
   }
 

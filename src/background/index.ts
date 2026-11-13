@@ -261,7 +261,7 @@ function setupDeclarativeRules(): Promise<void> {
 
 // Setup Context Menus with persistence across service worker restarts
 function setupContextMenu() {
-  const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in CloudPlay';
+  const title = ext.i18n?.getMessage('contextMenuPlay') || '▶ Play in Rook Player';
   const menuConfig = {
     id: 'cloudplay-open-link',
     title,

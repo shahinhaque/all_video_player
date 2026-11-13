@@ -1,10 +1,10 @@
 {
   "appName": {
-    "message": "CloudPlay – Cloud Video Player",
+    "message": "Rook Player",
     "description": "The name of the extension."
   },
   "appShortName": {
-    "message": "CloudPlay",
+    "message": "Rook Player",
     "description": "Short name for the extension."
   },
   "appDesc": {
@@ -12,11 +12,11 @@
     "description": "The description of the extension."
   },
   "actionTitle": {
-    "message": "CloudPlay",
+    "message": "Rook Player",
     "description": "Tooltip for the extension browser action."
   },
   "contextMenuPlay": {
-    "message": "Play with CloudPlay",
+    "message": "Play with Rook Player",
     "description": "Context menu title when right-clicking links."
   }
 }

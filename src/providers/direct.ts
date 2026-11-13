@@ -29,7 +29,7 @@ export async function fetchText(url: string): Promise<string> {
   } catch {}
 
   if (resp?.error) {
-    const hint = ' If using Firefox, please ensure host permissions are granted in about:addons -> CloudPlay -> Permissions, or allow access when prompted.';
+    const hint = ' If using Firefox, please ensure host permissions are granted in about:addons -> Rook Player -> Permissions, or allow access when prompted.';
     throw new PlayerError('network', `Background fetch failed: ${resp.error}.${hint}`);
   }
 

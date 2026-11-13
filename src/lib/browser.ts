@@ -74,11 +74,11 @@ function devStub(): Ext {
     i18n: {
       getMessage: (key: string) => {
         const msgs: Record<string, string> = {
-          appName: 'CloudPlay – Cloud Video Player',
-          appShortName: 'CloudPlay',
+          appName: 'Rook Player',
+          appShortName: 'Rook Player',
           appDesc: 'Stream TS, MP4, MKV, HLS & WebM videos straight from MEGA, Google Drive and OneDrive — playlists, next/previous, resume.',
-          actionTitle: 'CloudPlay',
-          contextMenuPlay: '▶ Play in CloudPlay',
+          actionTitle: 'Rook Player',
+          contextMenuPlay: '▶ Play in Rook Player',
         };
         return msgs[key] || '';
       },

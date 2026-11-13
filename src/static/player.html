@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudPlay Video Player</title>
+  <title>Rook Player</title>
   <link rel="icon" type="image/png" href="icons/icon32.png">
   <link rel="stylesheet" href="player.css">
 </head>
 <body class="theme-dark">
-  <div id="player-container" class="player-container" role="region" aria-label="CloudPlay Video Player">
+  <div id="player-container" class="player-container" role="region" aria-label="Rook Player">
     <!-- Main Video Surface -->
     <div class="video-wrapper">
       <video id="video-element" playsinline preload="auto"></video>
@@ -19,7 +19,9 @@
       <!-- Top Overlay Bar (Title + Status + Close) -->
       <header class="top-bar">
         <div class="brand">
-          <span class="brand-badge">CloudPlay</span>
+          <span class="brand-badge">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="vertical-align:-2px; margin-right:4px;" aria-hidden="true"><path d="M5 19h14v2H5v-2zm1-2.5h12v1.5H6v-1.5zm1.2-7h9.6L18 15.5H6l1.2-6zM5 3h3v2.5h2.5V3h3v2.5H16V3h3v5H5V3z"/></svg>Rook Player
+          </span>
           <span id="current-title" class="media-title" title="No media loaded">No media loaded</span>
         </div>
         <div class="top-actions">
